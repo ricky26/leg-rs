@@ -3,16 +3,44 @@ use std::{mem, result, error, fmt};
 #[macro_use]
 extern crate bitflags;
 
+pub type Word = i32;
 
 bitflags! {
-    flags InstructionFlags: u8 {
+    flags InstructionFlags: u16 {
         const INST_NORMAL         = 0,
 
         const INST_SET_FLAGS      = 1 << 0,
-        const INST_WORD           = 1 << 1,
+        const INST_HALF           = 1 << 1,
         const INST_BYTE           = 1 << 3,
         const INST_SIGNED         = 1 << 4,
         const INST_WIDE           = 1 << 5,
+
+        // LDM/STM
+        const INST_WRITEBACK      = 1 << 6,
+        const INST_DECREMENT      = 1 << 7,
+        const INST_BEFORE         = 1 << 8,
+
+        // B
+        const INST_LINK           = 1 << 9,
+        const INST_EXCHANGE       = 1 << 10,
+        const INST_NONZERO        = 1 << 11,
+    }
+}
+
+impl InstructionFlags {
+    pub fn get(&self, flag: InstructionFlags) -> bool {
+        (*self & flag) != INST_NORMAL
+    }
+    
+    pub fn stack_mode(&self) -> StackMode {
+        let dec = (*self & INST_DECREMENT) != INST_NORMAL;
+        let before = (*self & INST_BEFORE) != INST_NORMAL;
+        match (dec, before) {
+            (false, false) => StackMode::IA,
+            (false, true)  => StackMode::IB,
+            (true, false)  => StackMode::DA,
+            (true, true)   => StackMode::DB,
+        }
     }
 }
 
@@ -152,74 +180,101 @@ impl Condition {
     }
 }
 
+/// Shift type (used as an operand to some instructions)
+pub enum ShiftType {
+    None,
+    LSL,
+    LSR,
+    ASR,
+    RRX,
+    ROR
+}
+
+pub struct Shift(pub ShiftType, pub ImmOrReg<Word>);
+
+impl Shift {
+    pub fn none() -> Shift {
+        Shift(ShiftType::None, ImmOrReg::imm(0))
+    }
+}
+
+/// LDM/STM modes
+pub enum StackMode
+{
+    IB, // Increment before
+    DB, // Decrement before
+    IA, // Increment after
+    DA, // Decrement after
+}
+
 /// Implement this trait to respond to the emulator.
 pub trait ExecutionContext {
-    fn undefined(&mut self) {}
-    fn unpredictable(&mut self) {}
+    fn undefined(&mut self) -> Result<()> { Err(Error::Undefined) }
+    fn unpredictable(&mut self) -> Result<()> { Err(Error::Unpredictable) }
     
     // Move
-    fn mov(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>) { self.undefined() }
-    fn adr(&mut self, _dest: Register, _offset: ImmOrReg<i32>) { self.undefined() }
+    fn mov(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _shift: Shift) -> Result<()> { self.undefined() }
+    fn adr(&mut self, _dest: Register, _offset: ImmOrReg<Word>) -> Result<()> { self.undefined() }
 
     // Add/subtract
-    fn add(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _add: ImmOrReg<i32>) { self.undefined() }
-    fn sub(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _sub: ImmOrReg<i32>) { self.undefined() }
-    fn rsb(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _sub: ImmOrReg<i32>) { self.undefined() }
-    fn adc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _add: ImmOrReg<i32>) { self.undefined() }
-    fn sbc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _sub: ImmOrReg<i32>) { self.undefined() }
-    fn cmp(&mut self, _flags: InstructionFlags, _a: Register, _b: ImmOrReg<i32>) { self.undefined() }
-    fn cmn(&mut self, _flags: InstructionFlags, _a: Register, _b: ImmOrReg<i32>) { self.undefined() }
+    fn add(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _add: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn sub(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn rsb(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn adc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _add: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn sbc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn cmp(&mut self, _flags: InstructionFlags, _a: Register, _b: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn cmn(&mut self, _flags: InstructionFlags, _a: Register, _b: ImmOrReg<Word>) -> Result<()> { self.undefined() }
 
     // Bitwise
-    fn and(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i32>) { self.undefined() }
-    fn orr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i32>) { self.undefined() }
-    fn eor(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i32>) { self.undefined() }
-    fn lsl(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i8>) { self.undefined() }
-    fn lsr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i8>) { self.undefined() }
-    fn asr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i8>) { self.undefined() }
-    fn ror(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i8>) { self.undefined() }
-    fn rrx(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>) { self.undefined() }
-    fn bic(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i32>) { self.undefined() }
-    fn mvn(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>) { self.undefined() }
-    fn test(&mut self, _flags: InstructionFlags, _reg: Register, _src: ImmOrReg<i32>) { self.undefined() }
-    fn clz(&mut self, _flags: InstructionFlags, _dest: Register, _rc: Register) { self.undefined() }
-    fn teq(&mut self, _flags: InstructionFlags, _dest: Register, _src: i32) { self.undefined() }
+    fn and(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn orr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn eor(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn bic(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn mvn(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn test(&mut self, _flags: InstructionFlags, _reg: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn clz(&mut self, _flags: InstructionFlags, _dest: Register, _rc: Register) -> Result<()> { self.undefined() }
+    fn teq(&mut self, _flags: InstructionFlags, _dest: Register, _src: Word) -> Result<()> { self.undefined() }
 
-    fn mul(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _operand: ImmOrReg<i32>) { self.undefined() }
-    fn mla(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _mul: ImmOrReg<i32>, _add: ImmOrReg<i32>) { self.undefined() }
-    fn mls(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _mul: ImmOrReg<i32>, _sub: ImmOrReg<i32>) { self.undefined() }
+    fn mul(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn mla(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _mul: ImmOrReg<Word>, _add: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn mls(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _mul: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     
-    fn b(&mut self, _cond: Condition, _addr: ImmOrReg<i32>, _exchange: bool, _link: bool) { self.undefined() }
+    fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _addr: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _addr: ImmOrReg<Word>) -> Result<()> { self.undefined() }
 
-    fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<i32>, _off: ImmOrReg<i32>) { self.undefined() }
-    fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>, _off: ImmOrReg<i32>) { self.undefined() }
+    fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
 
-    fn cps(&mut self, _interrupt_enable: bool, _primask: bool, _faultmask: bool) { self.undefined() }
-    fn cbz(&mut self, _nonzero: bool, _src: Register, _addr: ImmOrReg<i32>) { self.undefined() }
-    fn xt(&mut self, _signed: bool, _flags: InstructionFlags, _src: Register, _dest: Register) { self.undefined() }
-    fn rev(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<i32>) { self.undefined() }
+    fn cps(&mut self, _interrupt_enable: bool, _primask: bool, _faultmask: bool) -> Result<()> { self.undefined() }
+    fn xt(&mut self, _flags: InstructionFlags, _src: Register, _dest: Register) -> Result<()> { self.undefined() }
+    fn rev(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
 
-    fn ldm(&mut self, _flags: InstructionFlags, _dest: Register, _registers: u16, _inc: bool) { self.undefined() }
-    fn stm(&mut self, _flags: InstructionFlags, _dest: Register, _registers: u16, _inc: bool) { self.undefined() }
+    fn ldm(&mut self, _flags: InstructionFlags, _addr: Register, _registers: u16) -> Result<()> { self.undefined() }
+    fn stm(&mut self, _flags: InstructionFlags, _addr: Register, _registers: u16) -> Result<()> { self.undefined() }
+    fn srs(&mut self, _flags: InstructionFlags, _addr: Register, _mode: i8) -> Result<()> { self.undefined() }
+    fn rfe(&mut self, _flags: InstructionFlags, _addr: Register) -> Result<()> { self.undefined() }
 
-    fn tb(&mut self, _flags: InstructionFlags) { self.undefined() }
+    fn tb(&mut self, _flags: InstructionFlags) -> Result<()> { self.undefined() }
     
-    fn bkpt(&mut self, _val: i8) { self.undefined() }
-    fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) { self.undefined() }
-    fn nop(&mut self) {}
-    fn yld(&mut self) {}
-    fn wfe(&mut self) {}
-    fn wfi(&mut self) {}
-    fn sev(&mut self) {}
-    fn svc(&mut self, _svc: i8) { self.undefined() }
+    fn bkpt(&mut self, _val: i8) -> Result<()> { self.undefined() }
+    fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) -> Result<()> { self.undefined() }
+    fn nop(&mut self) -> Result<()> { Ok(()) }
+    fn yld(&mut self) -> Result<()> { Ok(()) }
+    fn wfe(&mut self) -> Result<()> { Ok(()) }
+    fn wfi(&mut self) -> Result<()> { Ok(()) }
+    fn sev(&mut self, _local: bool) -> Result<()> { Ok(()) }
+    fn svc(&mut self, _svc: i8) -> Result<()> { self.undefined() }
+    fn hlt(&mut self, _info: i8) -> Result<()> { self.undefined() }
 
-    fn msr(&mut self, _dest: Register, _src: i8) { self.undefined() }
-    fn mrs(&mut self, _src: Register, _dest: i8) { self.undefined() }
+    fn msr(&mut self, _dest: Register, _src: i8) -> Result<()> { self.undefined() }
+    fn mrs(&mut self, _src: Register, _dest: i8) -> Result<()> { self.undefined() }
 
-    fn clrex(&mut self) {}
-    fn dsb(&mut self) {}
-    fn dmb(&mut self) {}
-    fn isb(&mut self) {}
+    fn clrex(&mut self) -> Result<()> { Ok(()) }
+    fn dsb(&mut self) -> Result<()> { Ok(()) }
+    fn dmb(&mut self) -> Result<()> { Ok(()) }
+    fn isb(&mut self) -> Result<()> { Ok(()) }
+
+    fn setend(&mut self, _big_endian: bool) -> Result<()> { self.undefined() }
 }
 
 /// ARM Emulator error.
@@ -227,7 +282,11 @@ pub trait ExecutionContext {
 pub enum Error {
     /// Hint for how many more bytes to receive before trying again.
     NotEnoughInput(i8),
-    /// Unknown unrecoverable error,
+    /// Undefined instruction encountered.
+    Undefined,
+    /// Unpredictable instruction encountered.
+    Unpredictable,
+    /// Unknown unrecoverable error.
     Unknown,
 }
 
@@ -235,6 +294,8 @@ impl error::Error for Error {
     fn description(&self) -> &str {
         match self {
             &Error::NotEnoughInput(_) => "not enough input",
+            &Error::Undefined         => "undefined instruction",
+            &Error::Unpredictable     => "unpredictable instruction",
             &Error::Unknown           => "an unknown error occurred",
         }
     }

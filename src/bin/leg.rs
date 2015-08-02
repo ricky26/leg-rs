@@ -49,11 +49,10 @@ fn main() {
     println!("{:?}", emu.register(leg::Register::R0));
 
     
-    copy_memory(&[0xb5, 0x80,
-                  0xaf, 0x00,
-                  0x46, 0xbd,
-                  0xbd, 0x80],
-                &mut emu.memory.0[0..8]);
+    copy_memory(&[0xbf, 0x30,
+                  0x30, 0x01,
+                  0x47, 0x70],
+                &mut emu.memory.0);
     println!("{:?}", emu.execute());
     
     let mut disas = String::new();

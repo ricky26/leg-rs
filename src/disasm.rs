@@ -1,8 +1,10 @@
 use std::fmt;
+use std::convert;
 
 use super::{
     Register, ImmOrReg, ExecutionContext, InstructionFlags,
-    INST_NORMAL, INST_SET_FLAGS, INST_BYTE, INST_WORD, INST_WIDE,
+    Shift, ShiftType, Result, Error,
+    INST_NORMAL, INST_SET_FLAGS, INST_BYTE, INST_HALF, INST_WIDE,
 };
 
 pub struct Disassembler<'a>(&'a mut fmt::Write);
@@ -15,19 +17,29 @@ impl<'a> Disassembler<'a> {
 }
 
 impl<'a> ExecutionContext for Disassembler<'a> {
-    fn undefined(&mut self) { writeln!(self.0, "undefined instruction").ok(); }
-    fn unpredictable(&mut self) { writeln!(self.0, "unpredictable instruction").ok(); }
+    fn undefined(&mut self) -> Result<()> {
+        try!(writeln!(self.0, "undefined instruction"));
+        Ok(())
+    }
+    
+    fn unpredictable(&mut self) -> Result<()> {
+        try!(writeln!(self.0, "unpredictable instruction"));
+        Ok(())
+    }
     
     // Move
-    fn mov(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>) {
-        writeln!(self.0, "MOV{} {}, {}", flags, dest, src).ok();
+    fn mov(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>, shift: Shift) -> Result<()> {
+        try!(writeln!(self.0, "MOV{} {}, {}{}", flags, dest, src, shift));
+        Ok(())
     }
-    fn adr(&mut self, dest: Register, offset: ImmOrReg<i32>) {
-        writeln!(self.0, "ADR {}, {}", dest, offset).ok();
+    fn adr(&mut self, dest: Register, offset: ImmOrReg<i32>) -> Result<()> {
+        try!(writeln!(self.0, "ADR {}, {}", dest, offset));
+        Ok(())
     }
 
-    fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>, add: ImmOrReg<i32>) {
-        writeln!(self.0, "ADD{} {}, {}, {}", flags, dest, src, add).ok();
+    fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>, add: ImmOrReg<i32>) -> Result<()> {
+        try!(writeln!(self.0, "ADD{} {}, {}, {}", flags, dest, src, add));
+        Ok(())
     }
 }
 
@@ -46,6 +58,19 @@ impl<T: fmt::Display> fmt::Display for ImmOrReg<T> {
     }
 }
 
+impl fmt::Display for Shift {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Shift(ShiftType::None, x) => x.fmt(fmt),
+            &Shift(ShiftType::LSL, x) => write!(fmt, " LSL {}", x),
+            &Shift(ShiftType::LSR, x) => write!(fmt, " LSR {}", x),
+            &Shift(ShiftType::ASR, x) => write!(fmt, " ASR {}", x),
+            &Shift(ShiftType::ROR, x) => write!(fmt, " ROR {}", x),
+            &Shift(ShiftType::RRX, x) => write!(fmt, " RRX {}", x),
+        }
+    }
+}
+
 impl fmt::Display for InstructionFlags {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         if (*self & INST_SET_FLAGS) != INST_NORMAL {
@@ -56,7 +81,7 @@ impl fmt::Display for InstructionFlags {
             try!(fmt.write_str("B"))
         }
         
-        if (*self & INST_WORD) != INST_NORMAL {
+        if (*self & INST_HALF) != INST_NORMAL {
             try!(fmt.write_str("H"))
         }
         
@@ -67,5 +92,11 @@ impl fmt::Display for InstructionFlags {
         }
 
         Ok(())
+    }
+}
+
+impl convert::From<fmt::Error> for Error {
+    fn from(_src: fmt::Error) -> Error {
+        Error::Unknown
     }
 }

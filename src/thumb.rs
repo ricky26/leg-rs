@@ -1,14 +1,54 @@
 // Parser for the THUMB-2 instruction set
 
 use std::fmt;
+use std::ops;
 
 use super::{
-    Error, Result, ExecutionContext, Register, ImmOrReg, Condition,
-    INST_NORMAL, INST_SET_FLAGS, INST_SIGNED, INST_WORD, INST_BYTE,
+    Word, Error, Result, ExecutionContext, Register, ImmOrReg, Condition, Shift, ShiftType,
+    INST_NORMAL, INST_SET_FLAGS, INST_SIGNED, INST_HALF, INST_BYTE, INST_LINK,
+    INST_WRITEBACK, INST_DECREMENT, INST_BEFORE, INST_EXCHANGE, INST_NONZERO,
     register, condition,
 };
 use super::disasm::Disassembler;
 
+#[inline]
+/// Extract bits from a source integer.
+fn bits<T>(src: T, start: T, count: T) -> T
+    where T: ops::Sub<T, Output=T> + ops::BitAnd<T, Output=T>
+    + ops::Shr<T, Output=T> + ops::Shl<T, Output=T> + From<i32>
+{
+    (src >> start) & ((T::from(1) << count)-T::from(1))
+}
+
+#[inline]
+/// Decode the immediate shift operand into a Shift struct.
+/// (Which can be used later to shift calculated values.)
+fn decode_imm_shift(op: Word, imm: Word) -> Shift {
+    match op {
+        0b00 => Shift(ShiftType::LSL, ImmOrReg::imm(imm)),
+        0b01 => Shift(ShiftType::LSR, ImmOrReg::imm(if imm == 0 { 32 } else { imm })),
+        0b10 => Shift(ShiftType::ASR, ImmOrReg::imm(if imm == 0 { 32 } else { imm })),
+        0b11 => if imm == 0 {
+            Shift(ShiftType::RRX, ImmOrReg::imm(1))
+        } else {
+            Shift(ShiftType::ROR, ImmOrReg::imm(imm))
+        },
+        _ => panic!("invalid imm shift"),
+    }
+}
+
+#[inline]
+fn decode_reg_shift(op: Word, reg: Register) -> Shift {
+    match op {
+        0b0010 => Shift(ShiftType::LSL, ImmOrReg::Reg(reg)),
+        0b0011 => Shift(ShiftType::LSR, ImmOrReg::Reg(reg)),
+        0b0100 => Shift(ShiftType::ASR, ImmOrReg::Reg(reg)),
+        0b0111 => Shift(ShiftType::ROR, ImmOrReg::Reg(reg)),
+        _ => panic!("invalid reg shift"),
+    }
+}
+
+/// Execute up to one THUMB instruction.
 pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a [u8]) -> (&'a [u8], Result<()>) {
     if buffer.len() < 2  {
         return (buffer, Err(Error::NotEnoughInput(2)))
@@ -45,6 +85,7 @@ pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a
     (buffer, Ok(()))
 }
 
+/// Disassemble some THUMB code.
 pub fn disassemble<'a, 'b>(fmt: &'b mut fmt::Write, mut buffer: &'a [u8]) -> (&'a [u8], Result<()>) {
     loop {
         if buffer.len() == 0 {
@@ -60,480 +101,520 @@ pub fn disassemble<'a, 'b>(fmt: &'b mut fmt::Write, mut buffer: &'a [u8]) -> (&'
     }
 }
 
+/// Execute a thumb-16 instruction as an integer.
 pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> {
-    match (src >> 9) & 0x7f {
-        0b0000000 | 0b0000001 | 0b0000010 | 0b0000011 |
-        0b0000100 | 0b0000101 | 0b0000110 | 0b0000111 |
-        0b0001000 | 0b0001001 | 0b0001010 | 0b0001011 |
-        0b0001100 | 0b0001101 | 0b0001110 | 0b0001111 |
-        0b0010000 | 0b0010001 | 0b0010010 | 0b0010011 |
-        0b0010100 | 0b0010101 | 0b0010110 | 0b0010111 |
-        0b0011000 | 0b0011001 | 0b0011010 | 0b0011011 |
-        0b0011100 | 0b0011101 | 0b0011110 | 0b0011111 => {
-            match (src >> 9) & 0x1f {
-                0b00000 | 0b00001 | 0b00010 | 0b00011 =>
-                    context.lsl(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::imm(((src >> 6) & 0x1f) as i8)),
-                0b00100 | 0b00101 | 0b00110 | 0b00111 => 
-                    context.lsr(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::imm(((src >> 6) & 0x1f) as i8)),
-                0b01000 | 0b01001 | 0b01010 | 0b01011 => 
-                    context.asr(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::imm(((src >> 6) & 0x1f) as i8)),
-                0b01100 =>
-                    context.add(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::register(((src >> 6) & 7) as i8)),
-                0b01101 => 
-                    context.sub(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::register(((src >> 6) & 7) as i8)),
-                0b01110 =>
-                    context.add(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::imm(((src >> 6) & 7) as i32)),
-                0b01111 =>
-                    context.sub(INST_SET_FLAGS,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8),
-                                ImmOrReg::imm(((src >> 6) & 7) as i32)),
-                0b10000 | 0b10001 | 0b10010 | 0b10011 =>
-                    context.mov(INST_SET_FLAGS,
-                                register(((src >> 8) & 7) as i8),
-                                ImmOrReg::imm((src & 0xff) as i32)),
-                0b10100 | 0b10101 | 0b10110 | 0b10111 =>
-                    context.cmp(INST_NORMAL,
-                                register(((src >> 8) & 7) as i8),
-                                ImmOrReg::imm((src & 0xff) as i32)),
-                0b11000 | 0b11001 | 0b11010 | 0b11011 =>
-                    context.add(INST_SET_FLAGS,
-                                register(((src >> 8) & 7) as i8),
-                                ImmOrReg::register(((src >> 8) & 7) as i8),
-                                ImmOrReg::imm((src & 0xff) as i32)),
-                0b11100 | 0b11101 | 0b11110 | 0b11111 =>
-                    context.sub(INST_SET_FLAGS,
-                                register(((src >> 8) & 7) as i8),
-                                ImmOrReg::register(((src >> 8) & 7) as i8),
-                                ImmOrReg::imm((src & 0xff) as i32)),
-                
-                _ => panic!("invalid bit pattern: thumb 16-bit basic alu"),
-            }
-        },
+    match src {
 
-        0b0100000 | 0b0100001 => {
-            match (src >> 6) & 0xf {
-                0b0000 => context.and(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0001 => context.eor(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0010 => context.lsl(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0011 => context.lsr(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0100 => context.asr(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0101 => context.adc(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0110 => context.sbc(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b0111 => context.ror(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1000 => context.test(INST_NORMAL,
-                                       register((src & 7) as i8),
-                                       ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1001 => context.rsb(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8),
-                                      ImmOrReg::imm(0)),
-                0b1010 => context.cmp(INST_NORMAL,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1011 => context.cmn(INST_NORMAL,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1100 => context.orr(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1101 => context.mul(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1110 => context.bic(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
-                0b1111 => context.mvn(INST_SET_FLAGS,
-                                      register((src & 7) as i8),
-                                      ImmOrReg::register(((src >> 3) & 7) as i8)),
+        //
+        // F3.2.1 - Shift (imm), add, subtract, move and compare
+        //
+        
+        0b0000_000000000000...0b0000_111111111111 |
+        0b00010_00000000000...0b00010_11111111111 =>
+            context.mov(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8),
+                        decode_imm_shift(bits(src as i32, 11, 2), bits(src as i32, 6, 5))),
 
-                _ => panic!("invalid bit pattern: thumb 16-bit data processing"),
-            }
-        },
+        0b0001100_000000000...0b0001100_111111111 =>
+            context.add(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8),
+                        ImmOrReg::imm(((src >> 6) & 7) as i32)),
 
-        0b0100010 | 0b0100011 => {
-            match (src >> 6) & 0x0f {
-                0b0000 | 0b0001 | 0b0010 | 0b0011 => {
-                    let rdn = register(((src & 7) | ((src >> 4) & 0x80)) as i8);
-                    context.add(INST_SET_FLAGS,
-                                rdn,
-                                ImmOrReg::Reg(rdn),
-                                ImmOrReg::register(((src >> 3) & 0xf) as i8))
-                },
-                
-                0b0100 => context.unpredictable(),
-                
-                0b0101 | 0b0110 | 0b0111 =>
-                    context.cmp(INST_NORMAL,
-                                register(((src & 7) | ((src >> 4) & 0x80)) as i8),
-                                ImmOrReg::register(((src >> 3) & 0xf) as i8)),
-
-                0b1000 | 0b1001 | 0b1010 | 0b1011 =>
-                    context.mov(INST_NORMAL,
-                                register(((src & 7) | ((src >> 4) & 0x80)) as i8),
-                                ImmOrReg::register(((src >> 3) & 0xf) as i8)),
-
-                0b1100 | 0b1101 =>
-                    context.b(Condition::AL,
-                              ImmOrReg::register(((src >> 3) & 0xf) as i8),
-                              false, true),
+        0b0001101_000000000...0b0001101_111111111 =>
+            context.sub(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8),
+                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+        
+        0b0001110_000000000...0b0001110_111111111 =>
+            context.add(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8),
+                        ImmOrReg::imm(((src >> 6) & 7) as i32)),
             
-                0b1110 | 0b1111 =>
-                    context.b(Condition::AL,
-                              ImmOrReg::register(((src >> 3) & 0xf) as i8),
-                              true, true),
-                
-                _ => panic!("invalid bit pattern: thumb 16-bit special data instructions"),                
-            }
+        0b0001111_000000000...0b0001111_111111111 =>
+            context.sub(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8),
+                        ImmOrReg::imm(((src >> 6) & 7) as i32)),
+        
+        0b00100_00000000000...0b00100_11111111111 =>
+            context.mov(INST_SET_FLAGS,
+                        register(((src >> 8) & 7) as i8),
+                        ImmOrReg::imm((src & 0xff) as i32),
+                        Shift::none()),
+        
+        0b00101_00000000000...0b00101_11111111111 =>
+            context.cmp(INST_NORMAL,
+                        register(((src >> 8) & 7) as i8),
+                        ImmOrReg::imm((src & 0xff) as i32)),
+        
+        0b00110_00000000000...0b00110_11111111111 =>
+            context.add(INST_SET_FLAGS,
+                        register(((src >> 8) & 7) as i8),
+                        ImmOrReg::register(((src >> 8) & 7) as i8),
+                        ImmOrReg::imm((src & 0xff) as i32)),
+        
+        0b00111_00000000000...0b00111_11111111111 =>
+            context.sub(INST_SET_FLAGS,
+                        register(((src >> 8) & 7) as i8),
+                        ImmOrReg::register(((src >> 8) & 7) as i8),
+                        ImmOrReg::imm((src & 0xff) as i32)),
+
+        //
+        // F3.2.2 Data-Processing
+        //
+        
+        0b0100000000_000000...0b0100000000_111111 =>
+            context.and(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100000001_000000...0b0100000001_111111 =>
+            context.eor(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+
+        0b010000001_0000000...0b010000001_1111111 |
+        0b0100000100_000000...0b0100000100_111111 |
+        0b0100000111_000000...0b0100000111_111111 =>
+            context.mov(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        decode_reg_shift(bits(src as i32, 6, 4), register(bits(src as i32, 3, 3) as i8))),
+
+        0b0100000101_000000...0b0100000101_111111 =>
+            context.adc(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100000110_000000...0b0100000110_111111 =>
+            context.sbc(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001000_000000...0b0100001000_111111 =>
+            context.test(INST_NORMAL,
+                         register((src & 7) as i8),
+                         ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001001_000000...0b0100001001_111111 =>
+            context.rsb(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8),
+                        ImmOrReg::imm(0)),
+        
+        0b0100001010_000000...0b0100001010_111111 =>
+            context.cmp(INST_NORMAL,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001011_000000...0b0100001011_111111 =>
+            context.cmn(INST_NORMAL,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001100_000000...0b0100001100_111111 =>
+            context.orr(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001101_000000...0b0100001101_111111 =>
+            context.mul(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001110_000000...0b0100001110_111111 =>
+            context.bic(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b0100001111_000000...0b0100001111_111111 =>
+            context.mvn(INST_SET_FLAGS,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+
+        //
+        // F3.2.3 - Special data instruction and branch and exchange
+        //
+
+        0b01000100_00000000...0b01000100_11111111 => {
+            let rdn = register(((src & 7) | ((src >> 4) & 0x80)) as i8);
+            context.add(INST_SET_FLAGS,
+                        rdn,
+                        ImmOrReg::Reg(rdn),
+                        ImmOrReg::register(((src >> 3) & 0xf) as i8))
         },
 
-        // Load literal
+        0b01000101_00000000...0b01000101_11111111 =>
+            context.cmp(INST_NORMAL,
+                        register(((src & 7) | ((src >> 4) & 0x80)) as i8),
+                        ImmOrReg::register(((src >> 3) & 0xf) as i8)),
 
-        0b0100100 | 0b0100101 | 0b0100110 | 0b0100111 =>
-                context.ldr(INST_NORMAL,
+        0b01000110_00000000...0b01000110_11111111 =>
+            context.mov(INST_NORMAL,
+                        register(((src & 7) | ((src >> 4) & 0x80)) as i8),
+                        ImmOrReg::register(((src >> 3) & 0xf) as i8),
+                        Shift::none()),
+
+        0b010001110_0000000...0b010001110_1111111 =>
+            context.b(INST_EXCHANGE,
+                      Condition::AL,
+                      ImmOrReg::register(((src >> 3) & 0xf) as i8)),
+        
+        0b010001111_0000000...0b010001111_1111111 =>
+            context.b(INST_LINK | INST_EXCHANGE,
+                      Condition::AL,
+                      ImmOrReg::register(((src >> 3) & 0xf) as i8)),
+
+        //
+        // Load Literal
+        //
+
+        0b01001_00000000000...0b01001_11111111111 =>
+            context.ldr(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::PC),
-                        ImmOrReg::imm((src & 0xf) as i32)),
+                        ImmOrReg::imm(((src & 0xf) as i32) << 2)),
 
+        //
         // Load/Store single data item
-        
-        0b0101000 =>
+        //
+
+        0b0101000_000000000...0b0101000_111111111 =>
             context.str(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101001 =>
-            context.str(INST_WORD,
+        0b0101001_000000000...0b0101001_111111111 =>
+            context.str(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101010 =>
-            context.str(INST_WORD,
+        0b0101010_000000000...0b0101010_111111111 =>
+            context.str(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101011 =>
+        0b0101011_000000000...0b0101011_111111111 =>
             context.ldr(INST_BYTE | INST_SIGNED,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101100 =>
+        0b0101100_000000000...0b0101100_111111111 =>
             context.ldr(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101101 =>
-            context.ldr(INST_WORD,
+        0b0101101_000000000...0b0101101_111111111 =>
+            context.ldr(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101110 =>
+        0b0101110_000000000...0b0101110_111111111 =>
             context.ldr(INST_BYTE,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
         
-        0b0101111 =>
-            context.ldr(INST_WORD | INST_SIGNED,
+        0b0101111_000000000...0b0101111_111111111 =>
+            context.ldr(INST_HALF | INST_SIGNED,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::register(((src >> 6) & 7) as i8)),
 
-        0b0110000 | 0b0110001 | 0b0110010 | 0b0110011 =>
+        0b01100_00000000000...0b01100_11111111111 =>
             context.str(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
-        
 
-        0b0110100 | 0b0110101 | 0b0110110 | 0b0110111 =>
+        0b01101_00000000000...0b01101_11111111111 =>
             context.ldr(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
 
-        0b0111000 | 0b0111001 | 0b0111010 | 0b0111011 =>
+        0b01110_00000000000...0b01110_11111111111 =>
             context.str(INST_BYTE,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
         
 
-        0b0111100 | 0b0111101 | 0b0111110 | 0b0111111 =>
+        0b01111_00000000000...0b01111_11111111111 =>
             context.ldr(INST_BYTE,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
 
-        0b1000000 | 0b1000001 | 0b1000010 | 0b1000011 =>
-            context.str(INST_WORD,
+        0b10000_00000000000...0b10000_11111111111 =>
+            context.str(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
         
 
-        0b1000100 | 0b1000101 | 0b1000110 | 0b1000111 =>
-            context.ldr(INST_WORD,
+        0b10001_00000000000...0b10001_11111111111 =>
+            context.ldr(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
 
-        0b1001000 | 0b1001001 | 0b1001010 | 0b1001011 =>
+        0b10010_00000000000...0b10010_11111111111 =>
             context.str(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::SP),
                         ImmOrReg::imm((src & 0xff) as i32)),
         
 
-        0b1001100 | 0b1001101 | 0b1001110 | 0b1001111 =>
+        0b10011_00000000000...0b10011_11111111111 =>
             context.ldr(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::SP),
                         ImmOrReg::imm((src & 0xff) as i32)),
 
         // ADR
-        0b1010000 | 0b1010001 | 0b1010010 | 0b1010011 =>
+        0b10100_00000000000...0b10100_11111111111 =>
             context.adr(register(((src >> 8) & 0x7) as i8),
                         ImmOrReg::imm((src & 0xff) as i32)),
         
         // ADD (SP+imm)
-        0b1010100 | 0b1010101 | 0b1010110 | 0b1010111 =>
+        0b10101_00000000000...0b10101_11111111111 =>
             context.add(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::SP),
                         ImmOrReg::imm((src & 0xff) as i32)),
 
-        // Push/Pop
-        0b1011010 => context.stm(INST_NORMAL,
-                                 Register::SP,
-                                 (0x4000 | (src & 0xff)) as u16,
-                                 true),
-        0b1011110 => context.ldm(INST_NORMAL,
-                                 Register::SP,
-                                 (0x4000 | (src & 0xff)) as u16,
-                                 true),
+        //
+        // F3.2.5 - Miscellaneous 16-bit instructions
+        //
 
-        // Misc
-        0b1011000 | 0b1011001 | 0b1011011 |
-        0b1011100 | 0b1011101 | 0b1011111 => {
-            match (src >> 5) & 0x7f {
-                0b0110011 => context.cps((src & 0x10) != 0,
-                                      (src & 0x02) != 0,
-                                      (src & 0x01) != 0),
+        0b101100000_0000000...0b101100000_1111111 =>
+            context.add(INST_NORMAL,
+                        Register::SP,
+                        ImmOrReg::Reg(Register::SP),
+                        ImmOrReg::imm((src & 0x7f) as i32)),
+        
+        0b101100001_0000000...0b101100001_1111111 =>
+            context.sub(INST_NORMAL,
+                        Register::SP,
+                        ImmOrReg::Reg(Register::SP),
+                        ImmOrReg::imm((src & 0x7f) as i32)),
+        
+        0b10110001_00000000...0b10110001_11111111 =>
+            context.cbz(INST_NORMAL,
+                        register((src & 3) as i8),
+                        ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
 
-                0b000000 | 0b000001 | 0b000010 | 0b000011 =>
-                    context.add(INST_NORMAL,
-                                Register::SP,
-                                ImmOrReg::Reg(Register::SP),
-                                ImmOrReg::imm((src & 0x7f) as i32)),
-                0b000100 | 0b000101 | 0b000110 | 0b000111 =>
-                    context.sub(INST_NORMAL,
-                                Register::SP,
-                                ImmOrReg::Reg(Register::SP),
-                                ImmOrReg::imm((src & 0x7f) as i32)),
+        0b1011001000_000000...0b1011001000_111111 =>
+            context.xt(INST_HALF | INST_SIGNED,
+                       register((src & 7) as i8),
+                       register(((src >> 3) & 7) as i8)),
+        
+        0b1011001001_000000...0b1011001001_111111 =>
+            context.xt(INST_BYTE | INST_SIGNED,
+                       register((src & 7) as i8),
+                       register(((src >> 3) & 7) as i8)),
+
+        0b10110010100_00000...0b10110010100_11111 =>
+            context.xt(INST_HALF,
+                       register((src & 7) as i8),
+                       register(((src >> 3) & 7) as i8)),
+        
+        0b10110010110_00000...0b10110010110_11111 =>
+            context.xt(INST_BYTE,
+                       register((src & 7) as i8),
+                       register(((src >> 3) & 7) as i8)),
+
+        0b10110011_00000000...0b10110011_11111111 =>
+            context.cbz(INST_NORMAL,
+                        register((src & 3) as i8),
+                        ImmOrReg::imm((((src >> 2) & 0x3e) | 0x40) as i32)),
+        
+        0b1011010_000000000...0b1011010_111111111 =>
+            context.stm(INST_WRITEBACK,
+                        Register::SP,
+                        (0x4000 | (src & 0xff)) as u16),
+
+        0b10110110010_00000...0b10110110010_11111 =>
+            context.setend(bits(src as i32, 3, 1) != 0),
+        
+        0b10110110011_00000...0b10110110011_11111 =>
+            context.cps((src & 0x10) != 0,
+                        (src & 0x02) != 0,
+                        (src & 0x01) != 0),
+
+        0b10111001_00000000...0b10111001_11111111 =>
+            context.cbz(INST_NONZERO,
+                        register((src & 3) as i8),
+                        ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
+        
+        0b1011101000_000000...0b1011101000_111111 =>
+            context.rev(INST_NORMAL,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+
+        0b1011101001_000000...0b1011101001_111111 =>
+            context.rev(INST_HALF,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b1011101010_000000...0b1011101010_111111 =>
+            context.hlt((src & 0x3f) as i8),
+
+        0b1011101011_000000...0b1011101011_111111 =>
+            context.rev(INST_HALF | INST_SIGNED,
+                        register((src & 7) as i8),
+                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+        
+        0b10111011_00000000...0b10111011_11111111 =>
+            context.cbz(INST_NONZERO,
+                        register((src & 3) as i8),
+                        ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
+        
+        0b1011110_000000000...0b1011110_111111111 =>
+            context.ldm(INST_WRITEBACK,
+                        Register::SP,
+                        (0x4000 | (src & 0xff)) as u16),
+
+        0b10111110_00000000...0b10111110_11111111 =>
+            context.bkpt((src & 0xff) as i8),
+
+        0b10111111_00000000...0b10111111_11111111 =>
+            if (src & 0xf) != 0 {
+                // IT
                 
-                0b001000 | 0b001001 | 0b001010 | 0b001011 |
-                0b001100 | 0b001101 | 0b001110 | 0b001111 =>
-                    context.cbz(false,
-                                register((src & 3) as i8),
-                                ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
-
-                0b0010000 | 0b0010001 =>
-                    context.xt(true,
-                               INST_WORD | INST_SIGNED,
-                               register((src & 7) as i8),
-                               register(((src >> 3) & 7) as i8)),
+                let cond = ((src >> 4) & 0xf) as i8;
+                let mask = src & 0xf;
+                let bit = if (cond & 1) != 0 { 0u16 } else { 0xffffu16 };
+                let mut count = 0;
                 
-                0b0010010 | 0b0010011 =>
-                    context.xt(true,
-                               INST_BYTE | INST_SIGNED,
-                               register((src & 7) as i8),
-                               register(((src >> 3) & 7) as i8)),
-
-                0b0010100 | 0b0010101 =>
-                    context.xt(true,
-                               INST_WORD,
-                               register((src & 7) as i8),
-                               register(((src >> 3) & 7) as i8)),
-                
-                0b0010110 | 0b0010111 =>
-                    context.xt(true,
-                               INST_BYTE,
-                               register((src & 7) as i8),
-                               register(((src >> 3) & 7) as i8)),
-
-                0b0011000 | 0b0011001 | 0b0011010 | 0b0011011 |
-                0b0011100 | 0b0011101 | 0b0011110 | 0b0011111 =>
-                    context.cbz(false,
-                                register((src & 3) as i8),
-                                ImmOrReg::imm((((src >> 2) & 0x3e) | 0x40) as i32)),
-
-                0b1010000 | 0b1010001 =>
-                    context.rev(INST_NORMAL,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8)),
-
-                0b1010010 | 0b1010011 =>
-                    context.rev(INST_WORD,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8)),
-
-                0b1010100 | 0b1010101 =>
-                    context.rev(INST_WORD | INST_SIGNED,
-                                register((src & 7) as i8),
-                                ImmOrReg::register(((src >> 3) & 7) as i8)),
-                
-                0b1001000 | 0b1001001 | 0b1001010 | 0b1001011 |
-                0b1001100 | 0b1001101 | 0b1001110 | 0b1001111 =>
-                    context.cbz(true,
-                                register((src & 3) as i8),
-                                ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
-
-                0b1011000 | 0b1011001 | 0b1011010 | 0b1011011 |
-                0b1011100 | 0b1011101 | 0b1011110 | 0b1011111 =>
-                    context.cbz(true,
-                                register((src & 3) as i8),
-                                ImmOrReg::imm((((src >> 2) & 0x3e) | 0x40) as i32)),
-
-                0b1110000 | 0b1110001 | 0b1110010 | 0b1110011 | 
-                0b1110100 | 0b1110101 | 0b1110110 | 0b1110111 =>
-                    context.bkpt((src & 0xff) as i8),
-
-                0b1111000 | 0b1111001 | 0b1111010 | 0b1111011 |
-                0b1111100 | 0b1111101 | 0b1111110 | 0b1111111 => {
-                    if (src & 0xf) != 0 {
-                        // IT
-
-                        let cond = ((src >> 4) & 0xf) as i8;
-                        let mask = src & 0xf;
-                        let bit = if (cond & 1) != 0 { 0u16 } else { 0xffffu16 };
-                        let mut count = 0;
-
-                        if (mask & 1) != 0 {
-                            count = 3
-                        } else if (mask & 2) != 0 {
-                            count = 2
-                        } else if (mask & 4) != 0 {
-                            count = 1
-                        } else if (mask & 8) == 0 {
-                            panic!("bad parse in thumb 16-bit ITT")
-                        }
-
-                        context.it(condition(cond), (mask ^ bit) as u8, count)
-                    } else {
-                        match (src >> 4) & 0xf {
-                            0b0000 => context.nop(),
-                            0b0001 => context.yld(),
-                            0b0010 => context.wfe(),
-                            0b0011 => context.wfi(),
-                            0b0100 => context.sev(),
-                            
-                            _ => context.nop(),
-                        }
-                    }
+                if (mask & 1) != 0 {
+                    count = 3
+                } else if (mask & 2) != 0 {
+                    count = 2
+                } else if (mask & 4) != 0 {
+                    count = 1
+                } else if (mask & 8) == 0 {
+                    panic!("bad parse in thumb 16-bit ITT")
                 }
                 
-                _ => context.undefined(),
-            }
-            
-        },
-
+                context.it(condition(cond), (mask ^ bit) as u8, count)
+            } else {
+                match (src >> 4) & 0xf {
+                    0b0000 => context.nop(),
+                    0b0001 => context.yld(),
+                    0b0010 => context.wfe(),
+                    0b0011 => context.wfi(),
+                    0b0100 => context.sev(false),
+                    0b0101 => context.sev(true),
+                    
+                    _ => context.nop(),
+                }
+            },
+        
         // STM
-
-        0b1100000 | 0b1100001 | 0b1100010 | 0b1100011 =>
-            context.stm(INST_NORMAL,
+        0b11000_00000000000...0b11000_11111111111 =>
+            context.stm(INST_WRITEBACK,
                         register(((src >> 8) & 7) as i8),
-                        (src & 0xff) as u16,
-                        true),
+                        (src & 0xff) as u16),
 
         // LDM
-        
-        0b1100100 | 0b1100101 | 0b1100110 | 0b1100111 => {
+        0b11001_00000000000...0b11001_11111111111 => {
             let reg_idx = (src >> 8) & 7;
-            context.ldm(INST_NORMAL,
+            context.ldm(if (src & (1 << reg_idx)) != 0 { INST_WRITEBACK } else { INST_NORMAL},
                         register(reg_idx as i8),
-                        (src & 0xff) as u16,
-                        (src & (1 << reg_idx)) != 0)
+                        (src & 0xff) as u16)
         },
 
-        0b1101000 | 0b1101001 | 0b1101010 | 0b1101011 |
-        0b1101100 | 0b1101101 | 0b1101110  => {
-            context.b(condition(((src >> 8) & 0xf) as i8),
-                      ImmOrReg::imm(((src & 0xff) << 1) as i32),
-                      false, false)
-        }
+        0b11011110_00000000...0b11011110_11111111 => context.undefined(),
+        0b11011111_00000000...0b11011111_11111111 => context.svc((src & 0xff) as i8),
 
-        0b1101111 => {
-            if (src & 0x10) != 0 {
-                context.svc((src & 0xff) as i8)
-            } else {
-                context.undefined()
-            }
-        },
-
-        0b1110000 | 0b1110001 | 0b1110010 | 0b1110011 =>
-            context.b(Condition::AL,
-                      ImmOrReg::imm((((src & 0x3ff) << 2) as i32) >> 1),
-                      false, false),
+        0b1101_000000000000...0b1101_111111111111  =>
+            context.b(INST_NORMAL,
+                      condition(((src >> 8) & 0xf) as i8),
+                      ImmOrReg::imm(((src & 0xff) << 1) as i32)),
+            
+        0b11100_00000000000...0b11100_11111111111 =>
+            context.b(INST_NORMAL,
+                      Condition::AL,
+                      ImmOrReg::imm((((src & 0x3ff) << 2) as i32) >> 1)),
         
         _ => context.undefined(),
     }
-
-    Ok(())
 }
 
+/// Execute a THUMB-32 instruction as an integer.
 pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> {
-    Err(Error::Unknown)
+    match src {
+        0...0b11100_11111111111_1111111111111111 => panic!("invalid 32-bit thumb instruction"),
+        
+        0b1110100010_000000_0000000000000000...0b1110100010_111111_1111111111111111 |
+        0b1110100100_000000_0000000000000000...0b1110100100_111111_1111111111111111 => {
+            let load = ((src >> 20) & 1) != 0;
+            let reg = register(bits(src as i32, 16, 4) as i8);
+            let regs = (src & 0xffff) as u16;
+            
+            let flags = if ((src >> 21) & 1) == 1 {
+                INST_WRITEBACK
+            } else {
+                INST_NORMAL
+            };
+
+            let flags = if ((src >> 24) & 1) == 1 {
+                INST_DECREMENT | INST_BEFORE | flags
+            } else {
+                INST_NORMAL | flags
+            };
+            
+            if load {
+                context.ldm(flags, reg, regs)
+            } else {
+                context.stm(flags, reg, regs)
+            }
+        },
+
+        0b1110100000_000000_0000000000000000...0b1110100000_111111_1111111111111111 |
+        0b1110100110_000000_0000000000000000...0b1110100110_111111_1111111111111111 => {
+            let load = ((src >> 20) & 1) != 0;
+            let reg = register(bits(src as i32, 16, 4) as i8);
+            
+            let flags = if ((src >> 21) & 1) == 1 {
+                INST_WRITEBACK
+            } else {
+                INST_NORMAL
+            };
+                
+            let flags = if ((src >> 23) & 1) == 0 {
+                INST_DECREMENT | INST_BEFORE | flags
+            } else {
+                INST_NORMAL | flags
+            };
+
+            if load {
+                context.rfe(flags, reg)
+            } else {
+                context.srs(flags, reg, bits(src as i32, 0, 5) as i8)
+            }
+        },
+        
+        _ => context.undefined(),
+    }
 }
 
