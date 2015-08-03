@@ -1,14 +1,9 @@
 use std::fmt;
 use std::convert;
 
-use super::{
-    Register, ImmOrReg, ExecutionContext, InstructionFlags,
-    Shift, ShiftType, Result, Error,
-    INST_NORMAL, INST_SET_FLAGS, INST_BYTE, INST_HALF, INST_WIDE,
-};
+use super::*;
 
 pub struct Disassembler<'a>(&'a mut fmt::Write);
-
 
 impl<'a> Disassembler<'a> {
     pub fn new(fmt: &'a mut fmt::Write) -> Disassembler<'a> {
@@ -28,8 +23,8 @@ impl<'a> ExecutionContext for Disassembler<'a> {
     }
     
     // Move
-    fn mov(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>, shift: Shift) -> Result<()> {
-        try!(writeln!(self.0, "MOV{} {}, {}{}", flags, dest, src, shift));
+    fn mov(&mut self, flags: InstructionFlags, dest: Register, src: Shifted) -> Result<()> {
+        try!(writeln!(self.0, "MOV{} {}, {}", flags, dest, src));
         Ok(())
     }
     fn adr(&mut self, dest: Register, offset: ImmOrReg<i32>) -> Result<()> {
@@ -37,7 +32,7 @@ impl<'a> ExecutionContext for Disassembler<'a> {
         Ok(())
     }
 
-    fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>, add: ImmOrReg<i32>) -> Result<()> {
+    fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<i32>, add: Shifted) -> Result<()> {
         try!(writeln!(self.0, "ADD{} {}, {}, {}", flags, dest, src, add));
         Ok(())
     }
@@ -58,10 +53,18 @@ impl<T: fmt::Display> fmt::Display for ImmOrReg<T> {
     }
 }
 
+impl fmt::Display for Shifted {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Shifted(ref shift, ref src) => write!(fmt, "{}{}", src, shift),
+        }
+    }
+}
+
 impl fmt::Display for Shift {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &Shift(ShiftType::None, x) => x.fmt(fmt),
+            &Shift(ShiftType::None, _) => Ok(()),
             &Shift(ShiftType::LSL, x) => write!(fmt, " LSL {}", x),
             &Shift(ShiftType::LSR, x) => write!(fmt, " LSR {}", x),
             &Shift(ShiftType::ASR, x) => write!(fmt, " ASR {}", x),

@@ -25,6 +25,9 @@ bitflags! {
         const INST_LINK           = 1 << 10,
         const INST_EXCHANGE       = 1 << 11,
         const INST_NONZERO        = 1 << 12,
+
+        // PKH
+        const INST_TBFORM         = 1 << 9,
     }
 }
 
@@ -95,6 +98,7 @@ pub enum StoreDoubleMode {
     Offset,
     PostIndex,
     PreIndex,
+    Unindexed,
 }
 
 impl Register {
@@ -198,6 +202,7 @@ pub enum ShiftType {
     ROR
 }
 
+/// A shift which should be applied to another operand.
 pub struct Shift(pub ShiftType, pub ImmOrReg<Word>);
 
 impl Shift {
@@ -205,6 +210,9 @@ impl Shift {
         Shift(ShiftType::None, ImmOrReg::imm(0))
     }
 }
+
+/// A shifted operand.
+pub struct Shifted(pub Shift, pub ImmOrReg<Word>);
 
 /// LDM/STM modes
 pub enum StackMode
@@ -221,43 +229,52 @@ pub trait ExecutionContext {
     fn unpredictable(&mut self) -> Result<()> { Err(Error::Unpredictable) }
     
     // Move
-    fn mov(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _shift: Shift) -> Result<()> { self.undefined() }
+    fn mov(&mut self, _flags: InstructionFlags, _dest: Register, _src: Shifted) -> Result<()> { self.undefined() }
     fn adr(&mut self, _dest: Register, _offset: ImmOrReg<Word>) -> Result<()> { self.undefined() }
 
     // Add/subtract
-    fn add(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _add: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn sub(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn rsb(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn adc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _add: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn sbc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn cmp(&mut self, _flags: InstructionFlags, _a: Register, _b: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn cmn(&mut self, _flags: InstructionFlags, _a: Register, _b: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn add(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _add: Shifted) -> Result<()> { self.undefined() }
+    fn sub(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: Shifted) -> Result<()> { self.undefined() }
+    fn rsb(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: Shifted) -> Result<()> { self.undefined() }
+    fn adc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _add: Shifted) -> Result<()> { self.undefined() }
+    fn sbc(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _sub: Shifted) -> Result<()> { self.undefined() }
+    fn cmp(&mut self, _flags: InstructionFlags, _a: Register, _b: Shifted) -> Result<()> { self.undefined() }
+    fn cmn(&mut self, _flags: InstructionFlags, _a: Register, _b: Shifted) -> Result<()> { self.undefined() }
 
     // Bitwise
-    fn and(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn orr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn eor(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn bic(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn mvn(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    fn test(&mut self, _flags: InstructionFlags, _reg: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn and(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.undefined() }
+    fn orr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.undefined() }
+    fn eor(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.undefined() }
+    fn bic(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.undefined() }
+    fn mvn(&mut self, _flags: InstructionFlags, _dest: Register, _src: Shifted) -> Result<()> { self.undefined() }
+    fn orn(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.undefined() }
     fn clz(&mut self, _flags: InstructionFlags, _dest: Register, _rc: Register) -> Result<()> { self.undefined() }
-    fn teq(&mut self, _flags: InstructionFlags, _dest: Register, _src: Word) -> Result<()> { self.undefined() }
+    fn tst(&mut self, _flags: InstructionFlags, _reg: Register, _src: Shifted) -> Result<()> { self.undefined() }
+    fn teq(&mut self, _flags: InstructionFlags, _dest: Register, _src: Shifted) -> Result<()> { self.undefined() }
 
+    // Multiplication
     fn mul(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn mla(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _mul: ImmOrReg<Word>, _add: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn mls(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _mul: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-    
+
+    // Branching
     fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _addr: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _addr: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn tb(&mut self, _flags: InstructionFlags, _table: Register, _index: Register) -> Result<()> { self.undefined() }
 
+    // Bytes
+    fn xt(&mut self, _flags: InstructionFlags, _src: Register, _dest: Register) -> Result<()> { self.undefined() }
+    fn rev(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn pkh(&mut self, _flags: InstructionFlags, _dest: Register, _a: Register, _b: Shifted) -> Result<()> { self.undefined() }
+    
+    // Store/Load
     fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     
     fn strex(&mut self, flags: InstructionFlags, res: Register, src: Register,
              dest: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> {
         try!(self.str(flags, src, dest, off));
-        self.mov(INST_NORMAL, res, ImmOrReg::imm(0), Shift::none())
+        self.mov(INST_NORMAL, res, Shifted(Shift::none(), ImmOrReg::imm(0)))
     }
     fn ldrex(&mut self, flags: InstructionFlags,
              dest: Register, src: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> { 
@@ -275,16 +292,15 @@ pub trait ExecutionContext {
               _r0: Register, _r1: Register, _base: Register) -> Result<()> { self.undefined() }
     fn ldrexd(&mut self, _flags: InstructionFlags,
               _r0: Register, _r1: Register, _base: Register) -> Result<()> { self.undefined() }
-
-    fn cps(&mut self, _interrupt_enable: bool, _primask: bool, _faultmask: bool) -> Result<()> { self.undefined() }
-    fn xt(&mut self, _flags: InstructionFlags, _src: Register, _dest: Register) -> Result<()> { self.undefined() }
-    fn rev(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>) -> Result<()> { self.undefined() }
-
+    
     fn ldm(&mut self, _flags: InstructionFlags, _addr: Register, _registers: u16) -> Result<()> { self.undefined() }
     fn stm(&mut self, _flags: InstructionFlags, _addr: Register, _registers: u16) -> Result<()> { self.undefined() }
     fn srs(&mut self, _flags: InstructionFlags, _addr: Register, _mode: i8) -> Result<()> { self.undefined() }
     fn rfe(&mut self, _flags: InstructionFlags, _addr: Register) -> Result<()> { self.undefined() }
+
+    // System
     
+    fn cps(&mut self, _interrupt_enable: bool, _primask: bool, _faultmask: bool) -> Result<()> { self.undefined() }
     fn bkpt(&mut self, _val: i8) -> Result<()> { self.undefined() }
     fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) -> Result<()> { self.undefined() }
     fn nop(&mut self) -> Result<()> { Ok(()) }
@@ -298,12 +314,12 @@ pub trait ExecutionContext {
     fn msr(&mut self, _dest: Register, _src: i8) -> Result<()> { self.undefined() }
     fn mrs(&mut self, _src: Register, _dest: i8) -> Result<()> { self.undefined() }
 
+    fn setend(&mut self, _big_endian: bool) -> Result<()> { self.undefined() }
+
     fn clrex(&mut self) -> Result<()> { Ok(()) }
     fn dsb(&mut self) -> Result<()> { Ok(()) }
     fn dmb(&mut self) -> Result<()> { Ok(()) }
     fn isb(&mut self) -> Result<()> { Ok(()) }
-
-    fn setend(&mut self, _big_endian: bool) -> Result<()> { self.undefined() }
 }
 
 /// ARM Emulator error.

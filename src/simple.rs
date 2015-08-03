@@ -1,13 +1,7 @@
 use std::fmt;
-use std::io;
 
-use super::{
-    Word, Error, Result, Register, ExecutionContext, ImmOrReg,
-    InstructionFlags, Condition, ShiftType, Shift,
-    INST_NORMAL, INST_SET_FLAGS, INST_WRITEBACK, INST_BEFORE, INST_DECREMENT,
-    INST_BYTE, INST_HALF, INST_LINK, INST_EXCHANGE, INST_NONZERO,
-    register,
-};
+use super::*;
+use super::register;
 
 pub trait IntTruncate {
     fn int_truncate(src: Word) -> Self;
@@ -120,6 +114,10 @@ impl<M: Memory> SimpleEmulator<M> {
             _ => panic!("TODO: unimplemented shift type"),
         }
     }
+
+    pub fn shifted(&self, src: Shifted) -> Word {
+        self.shift(self.imm_or_reg(src.1), src.0)
+    }
     
     pub fn negative(&self) -> bool {
         ((self.apsr >> 31) & 1) != 0
@@ -231,7 +229,7 @@ impl<M: Memory> SimpleEmulator<M> {
             }
         }
 
-        self.print_state();
+        //try!(self.print_state());
         
         err
     }
@@ -240,8 +238,6 @@ impl<M: Memory> SimpleEmulator<M> {
         loop {
             try!(self.execute_one());
         }
-
-        Ok(())
     }
 
     pub fn dump_state(&self, fmt: &mut fmt::Write) -> fmt::Result {
@@ -287,12 +283,11 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     }
     
     // Move
-    fn mov(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, shift: Shift) -> Result<()> {
-        let val = self.shift(self.imm_or_reg(src), shift);
+    fn mov(&mut self, flags: InstructionFlags, dest: Register, src: Shifted) -> Result<()> {
+        let val = self.shifted(src);
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmn(val, 0, 0)
         }
-        println!("MOV {} = {}", dest, val);
         self.set_register(dest, val);
         Ok(())
     }
@@ -304,10 +299,9 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     }
 
     // Add/subtract
-    fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: ImmOrReg<Word>) -> Result<()> {
-        println!("add {:?}, {:?}, {:?}", dest, src, add);
+    fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
         let a = self.imm_or_reg(src);
-        let b = self.imm_or_reg(add);
+        let b = self.shifted(add);
         let val = a + b;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmn(a, b, 0)
@@ -315,9 +309,9 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         self.set_register(dest, val);
         Ok(())
     }
-    fn sub(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: ImmOrReg<Word>) -> Result<()> {
+    fn sub(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
         let a = self.imm_or_reg(src);
-        let b = self.imm_or_reg(sub);
+        let b = self.shifted(sub);
         let val = a - b;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmp(a, b, 0)
@@ -325,9 +319,9 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         self.set_register(dest, val);
         Ok(())
     }
-    fn rsb(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: ImmOrReg<Word>) -> Result<()> {
+    fn rsb(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
         let a = self.imm_or_reg(src);
-        let b = self.imm_or_reg(sub);
+        let b = self.shifted(sub);
         let val = b - a;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmp(b, a, 0)
@@ -335,9 +329,9 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         self.set_register(dest, val);
         Ok(())
     }
-    fn adc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: ImmOrReg<Word>) -> Result<()> {
+    fn adc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
         let a = self.imm_or_reg(src);
-        let b = self.imm_or_reg(add);
+        let b = self.shifted(add);
         let c = self.carry() as Word;
         let val = a + b + c;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
@@ -346,9 +340,9 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         self.set_register(dest, val);
         Ok(())
     }
-    fn sbc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: ImmOrReg<Word>) -> Result<()> {
+    fn sbc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
         let a = self.imm_or_reg(src);
-        let b = self.imm_or_reg(sub);
+        let b = self.shifted(sub);
         let c = self.carry() as Word;
         let val = a - b - c;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
@@ -357,32 +351,32 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         self.set_register(dest, val);
         Ok(())
     }
-    fn cmp(&mut self, _flags: InstructionFlags, a: Register, b: ImmOrReg<Word>) -> Result<()> {
+    fn cmp(&mut self, _flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
         let a = self.register(a);
-        let b = self.imm_or_reg(b);
+        let b = self.shifted(b);
         self.cmp(a, b, 0);
         Ok(())
     }
-    fn cmn(&mut self, _flags: InstructionFlags, a: Register, b: ImmOrReg<Word>) -> Result<()> {
+    fn cmn(&mut self, _flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
         let a = self.register(a);
-        let b = self.imm_or_reg(b);
+        let b = self.shifted(b);
         self.cmn(a, b, 0);
         Ok(())
     }
 
     // Bitwise
-    fn and(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: ImmOrReg<Word>) -> Result<()> {
-        let val = self.imm_or_reg(src) & self.imm_or_reg(operand);
+    fn and(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
+        let val = self.imm_or_reg(src) & self.shifted(operand);
         self.set_register(dest, val);
         Ok(())
     }
-    fn orr(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: ImmOrReg<Word>) -> Result<()> {
-        let val =self.imm_or_reg(src) | self.imm_or_reg(operand);
+    fn orr(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
+        let val =self.imm_or_reg(src) | self.shifted(operand);
         self.set_register(dest, val);
         Ok(())
     }
-    fn eor(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: ImmOrReg<Word>) -> Result<()> {
-        let val = self.imm_or_reg(src) ^ self.imm_or_reg(operand);
+    fn eor(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
+        let val = self.imm_or_reg(src) ^ self.shifted(operand);
         self.set_register(dest, val);
         Ok(())
     }
@@ -390,8 +384,6 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     fn str(&mut self, flags: InstructionFlags, src: Register, dest: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> {
         let addr = self.imm_or_reg(dest) + self.imm_or_reg(off);
         let value = self.register(src);
-
-        println!("STR {} -> {}+{} = {}", src, self.imm_or_reg(dest), self.imm_or_reg(off), value);
 
         if flags.get(INST_BYTE) {
             self.memory.write_u8(addr as u64, value as u8)
@@ -414,7 +406,6 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
             value = try!(self.memory.read_u32(addr as u64)) as i32;
         }
         
-        println!("LDR {} <- {}+{} = {}", dest, self.imm_or_reg(src), self.imm_or_reg(off), value);
         self.set_register(dest, value);
         Ok(())
     }
@@ -525,11 +516,5 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         } else {
             Ok(())
         }
-    }
-
-    fn wfi(&mut self) -> Result<()> {
-        let mut v = String::new();
-        io::stdin().read_line(&mut v).ok();
-        Ok(())
     }
 }

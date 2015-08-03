@@ -109,55 +109,62 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b00010_00000000000...0b00010_11111111111 =>
             context.mov(INST_SET_FLAGS,
                         register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8),
-                        decode_imm_shift(bits(src as i32, 11, 2), bits(src as i32, 6, 5))),
+                        Shifted(decode_imm_shift(bits(src as i32, 11, 2), bits(src as i32, 6, 5)),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
 
         0b0001100_000000000...0b0001100_111111111 =>
             context.add(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 7) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 7) as i32))),
 
         0b0001101_000000000...0b0001101_111111111 =>
             context.sub(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0001110_000000000...0b0001110_111111111 =>
             context.add(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 7) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 7) as i32))),
             
         0b0001111_000000000...0b0001111_111111111 =>
             context.sub(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 7) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 7) as i32))),
         
         0b00100_00000000000...0b00100_11111111111 =>
             context.mov(INST_SET_FLAGS,
                         register(((src >> 8) & 7) as i8),
-                        ImmOrReg::imm((src & 0xff) as i32),
-                        Shift::none()),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
         
         0b00101_00000000000...0b00101_11111111111 =>
             context.cmp(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
-                        ImmOrReg::imm((src & 0xff) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
         
         0b00110_00000000000...0b00110_11111111111 =>
             context.add(INST_SET_FLAGS,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::register(((src >> 8) & 7) as i8),
-                        ImmOrReg::imm((src & 0xff) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
         
         0b00111_00000000000...0b00111_11111111111 =>
             context.sub(INST_SET_FLAGS,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::register(((src >> 8) & 7) as i8),
-                        ImmOrReg::imm((src & 0xff) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
 
         //
         // F3.2.2 Data-Processing
@@ -167,60 +174,69 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.and(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100000001_000000...0b0100000001_111111 =>
             context.eor(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
 
         0b010000001_0000000...0b010000001_1111111 |
         0b0100000100_000000...0b0100000100_111111 |
         0b0100000111_000000...0b0100000111_111111 =>
             context.mov(INST_SET_FLAGS,
                         register((src & 7) as i8),
-                        ImmOrReg::register((src & 7) as i8),
-                        decode_reg_shift(bits(src as i32, 6, 4), register(bits(src as i32, 3, 3) as i8))),
+                        Shifted(decode_reg_shift(bits(src as i32, 6, 4), register(bits(src as i32, 3, 3) as i8)),
+                                ImmOrReg::register((src & 7) as i8))),
 
         0b0100000101_000000...0b0100000101_111111 =>
             context.adc(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100000110_000000...0b0100000110_111111 =>
             context.sbc(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100001000_000000...0b0100001000_111111 =>
-            context.test(INST_NORMAL,
-                         register((src & 7) as i8),
-                         ImmOrReg::register(((src >> 3) & 7) as i8)),
+            context.tst(INST_NORMAL,
+                        register((src & 7) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100001001_000000...0b0100001001_111111 =>
             context.rsb(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(0)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(0))),
         
         0b0100001010_000000...0b0100001010_111111 =>
             context.cmp(INST_NORMAL,
                         register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100001011_000000...0b0100001011_111111 =>
             context.cmn(INST_NORMAL,
                         register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100001100_000000...0b0100001100_111111 =>
             context.orr(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100001101_000000...0b0100001101_111111 =>
             context.mul(INST_SET_FLAGS,
@@ -232,12 +248,14 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.bic(INST_SET_FLAGS,
                         register((src & 7) as i8),
                         ImmOrReg::register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
         
         0b0100001111_000000...0b0100001111_111111 =>
             context.mvn(INST_SET_FLAGS,
                         register((src & 7) as i8),
-                        ImmOrReg::register(((src >> 3) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 7) as i8))),
 
         //
         // F3.2.3 - Special data instruction and branch and exchange
@@ -248,19 +266,21 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.add(INST_SET_FLAGS,
                         rdn,
                         ImmOrReg::Reg(rdn),
-                        ImmOrReg::register(((src >> 3) & 0xf) as i8))
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 0xf) as i8)))
         },
 
         0b01000101_00000000...0b01000101_11111111 =>
             context.cmp(INST_NORMAL,
                         register(((src & 7) | ((src >> 4) & 0x80)) as i8),
-                        ImmOrReg::register(((src >> 3) & 0xf) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 0xf) as i8))),
 
         0b01000110_00000000...0b01000110_11111111 =>
             context.mov(INST_NORMAL,
                         register(((src & 7) | ((src >> 4) & 0x80)) as i8),
-                        ImmOrReg::register(((src >> 3) & 0xf) as i8),
-                        Shift::none()),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 3) & 0xf) as i8))),
 
         0b010001110_0000000...0b010001110_1111111 =>
             context.b(INST_EXCHANGE,
@@ -395,7 +415,8 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.add(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::SP),
-                        ImmOrReg::imm((src & 0xff) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
 
         //
         // F3.2.5 - Miscellaneous 16-bit instructions
@@ -405,13 +426,15 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.add(INST_NORMAL,
                         Register::SP,
                         ImmOrReg::Reg(Register::SP),
-                        ImmOrReg::imm((src & 0x7f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0x7f) as i32))),
         
         0b101100001_0000000...0b101100001_1111111 =>
             context.sub(INST_NORMAL,
                         Register::SP,
                         ImmOrReg::Reg(Register::SP),
-                        ImmOrReg::imm((src & 0x7f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0x7f) as i32))),
         
         0b10110001_00000000...0b10110001_11111111 =>
             context.cbz(INST_NORMAL,
@@ -558,13 +581,15 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
 /// Execute a THUMB-32 instruction as an integer.
 pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> {
+    let s32 = src as i32;
+    
     match src {
         0...0b11100_11111111111_1111111111111111 => panic!("invalid 32-bit thumb instruction"),
         
         0b1110100010_000000_0000000000000000...0b1110100010_111111_1111111111111111 |
         0b1110100100_000000_0000000000000000...0b1110100100_111111_1111111111111111 => {
             let load = ((src >> 20) & 1) != 0;
-            let reg = register(bits(src as i32, 16, 4) as i8);
+            let reg = register(bits(s32, 16, 4) as i8);
             let regs = (src & 0xffff) as u16;
             
             let flags = if ((src >> 21) & 1) == 1 {
@@ -589,7 +614,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         0b1110100000_000000_0000000000000000...0b1110100000_111111_1111111111111111 |
         0b1110100110_000000_0000000000000000...0b1110100110_111111_1111111111111111 => {
             let load = ((src >> 20) & 1) != 0;
-            let reg = register(bits(src as i32, 16, 4) as i8);
+            let reg = register(bits(s32, 16, 4) as i8);
             
             let flags = if ((src >> 21) & 1) == 1 {
                 INST_WRITEBACK
@@ -606,23 +631,23 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             if load {
                 context.rfe(flags, reg)
             } else {
-                context.srs(flags, reg, bits(src as i32, 0, 5) as i8)
+                context.srs(flags, reg, bits(s32, 0, 5) as i8)
             }
         },
 
         // STREX
         0b111010000100_0000_0000000000000000...0b111010000100_1111_1111111111111111 =>
             context.strex(INST_NORMAL,
-                          register(bits(src as i32, 8, 4) as i8),
-                          register(bits(src as i32, 12, 4) as i8),
-                          ImmOrReg::register(bits(src as i32, 16, 4) as i8),
-                          ImmOrReg::imm(bits(src as i32, 0, 8))),
+                          register(bits(s32, 8, 4) as i8),
+                          register(bits(s32, 12, 4) as i8),
+                          ImmOrReg::register(bits(s32, 16, 4) as i8),
+                          ImmOrReg::imm(bits(s32, 0, 8))),
         // LDREX
         0b111010000101_0000_0000000000000000...0b111010000101_1111_1111111111111111 =>
             context.ldrex(INST_NORMAL,
-                          register(bits(src as i32, 12, 4) as i8),
-                          ImmOrReg::register(bits(src as i32, 16, 4) as i8),
-                          ImmOrReg::imm(bits(src as i32, 0, 8))),
+                          register(bits(s32, 12, 4) as i8),
+                          ImmOrReg::register(bits(s32, 16, 4) as i8),
+                          ImmOrReg::imm(bits(s32, 0, 8))),
 
         // STRD
         0b111010000110_0000_0000000000000000...0b111010000110_1111_1111111111111111 |
@@ -639,13 +664,13 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             };
             
             let neg = ((src >> 24) & 1) != 0;
-            let val = bits(src as i32, 0, 8);
+            let val = bits(s32, 0, 8);
             let val = if neg { -val } else { val };
 
             context.strd(INST_NORMAL, mode,
-                         register(bits(src as i32, 12, 4) as i8),
-                         register(bits(src as i32, 8, 4) as i8),
-                         register(bits(src as i32, 16, 4) as i8),
+                         register(bits(s32, 12, 4) as i8),
+                         register(bits(s32, 8, 4) as i8),
+                         register(bits(s32, 16, 4) as i8),
                          ImmOrReg::imm(val))
         },
         
@@ -663,144 +688,388 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             };
             
             let neg = ((src >> 24) & 1) != 0;
-            let val = bits(src as i32, 0, 8);
+            let val = bits(s32, 0, 8);
             let val = if neg { -val } else { val };
 
             context.ldrd(INST_NORMAL, mode,
-                         register(bits(src as i32, 12, 4) as i8),
-                         register(bits(src as i32, 8, 4) as i8),
-                         register(bits(src as i32, 16, 4) as i8),
+                         register(bits(s32, 12, 4) as i8),
+                         register(bits(s32, 8, 4) as i8),
+                         register(bits(s32, 16, 4) as i8),
                          ImmOrReg::imm(val))
         },
             
         0b111010001100_0000_0000000000000000...0b111010001100_1111_1111111111111111 =>
-            match bits(src as i32, 4, 4) {
+            match bits(s32, 4, 4) {
                 0b0100 => context.strex(INST_BYTE,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
                 
                 0b0101 => context.strex(INST_HALF,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
 
                 0b0111 => context.strexd(INST_NORMAL,
-                                         register(bits(src as i32, 0, 4) as i8),
-                                         register(bits(src as i32, 12, 4) as i8),
-                                         register(bits(src as i32, 8, 4) as i8),
-                                         register(bits(src as i32, 16, 4) as i8)),
+                                         register(bits(s32, 0, 4) as i8),
+                                         register(bits(s32, 12, 4) as i8),
+                                         register(bits(s32, 8, 4) as i8),
+                                         register(bits(s32, 16, 4) as i8)),
 
                 0b1000 => context.str(INST_BYTE | INST_ACQUIRE,
-                                      register(bits(src as i32, 12, 4) as i8),
-                                      ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                      register(bits(s32, 12, 4) as i8),
+                                      ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       ImmOrReg::imm(0)),
                 
                 0b1001 => context.str(INST_HALF | INST_ACQUIRE,
-                                      register(bits(src as i32, 12, 4) as i8),
-                                      ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                      register(bits(s32, 12, 4) as i8),
+                                      ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       ImmOrReg::imm(0)),
                 
                 0b1010 => context.str(INST_ACQUIRE,
-                                      register(bits(src as i32, 12, 4) as i8),
-                                      ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                      register(bits(s32, 12, 4) as i8),
+                                      ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       ImmOrReg::imm(0)),
 
                 0b1100 => context.strex(INST_BYTE | INST_ACQUIRE,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
                 
                 0b1101 => context.strex(INST_HALF | INST_ACQUIRE,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
                 
                 0b1110 => context.strex(INST_ACQUIRE,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
 
                 0b1111 => context.strexd(INST_ACQUIRE,
-                                         register(bits(src as i32, 0, 4) as i8),
-                                         register(bits(src as i32, 12, 4) as i8),
-                                         register(bits(src as i32, 8, 4) as i8),
-                                         register(bits(src as i32, 16, 4) as i8)),
+                                         register(bits(s32, 0, 4) as i8),
+                                         register(bits(s32, 12, 4) as i8),
+                                         register(bits(s32, 8, 4) as i8),
+                                         register(bits(s32, 16, 4) as i8)),
 
                 _ => panic!("thumb store release parse fail"),
             },
         
         0b111010001101_0000_0000000000000000...0b111010001101_1111_1111111111111111 => 
-            match bits(src as i32, 4, 4) {
+            match bits(s32, 4, 4) {
                 0b0000 => context.tb(INST_BYTE,
-                                     register(bits(src as i32, 16, 4) as i8),
-                                     register(bits(src as i32, 0, 4) as i8)),
+                                     register(bits(s32, 16, 4) as i8),
+                                     register(bits(s32, 0, 4) as i8)),
                 
                 0b0001 => context.tb(INST_HALF,
-                                     register(bits(src as i32, 16, 4) as i8),
-                                     register(bits(src as i32, 0, 4) as i8)),
+                                     register(bits(s32, 16, 4) as i8),
+                                     register(bits(s32, 0, 4) as i8)),
 
                 0b0100 => context.strex(INST_BYTE,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
                 
                 0b0101 => context.strex(INST_HALF,
-                                        register(bits(src as i32, 0, 4) as i8),
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 0, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
 
                 0b0111 => context.strexd(INST_NORMAL,
-                                         register(bits(src as i32, 0, 4) as i8),
-                                         register(bits(src as i32, 12, 4) as i8),
-                                         register(bits(src as i32, 8, 4) as i8),
-                                         register(bits(src as i32, 16, 4) as i8)),
+                                         register(bits(s32, 0, 4) as i8),
+                                         register(bits(s32, 12, 4) as i8),
+                                         register(bits(s32, 8, 4) as i8),
+                                         register(bits(s32, 16, 4) as i8)),
 
                 0b1000 => context.ldr(INST_BYTE | INST_ACQUIRE,
-                                      register(bits(src as i32, 12, 4) as i8),
-                                      ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                      register(bits(s32, 12, 4) as i8),
+                                      ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       ImmOrReg::imm(0)),
                 
                 0b1001 => context.ldr(INST_HALF | INST_ACQUIRE,
-                                      register(bits(src as i32, 12, 4) as i8),
-                                      ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                      register(bits(s32, 12, 4) as i8),
+                                      ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       ImmOrReg::imm(0)),
                 
                 0b1010 => context.ldr(INST_ACQUIRE,
-                                      register(bits(src as i32, 12, 4) as i8),
-                                      ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                      register(bits(s32, 12, 4) as i8),
+                                      ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       ImmOrReg::imm(0)),
 
                 0b1100 => context.ldrex(INST_BYTE | INST_ACQUIRE,
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
                 
                 0b1101 => context.ldrex(INST_HALF | INST_ACQUIRE,
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
                 
                 0b1110 => context.ldrex(INST_ACQUIRE,
-                                        register(bits(src as i32, 12, 4) as i8),
-                                        ImmOrReg::register(bits(src as i32, 16, 4) as i8),
+                                        register(bits(s32, 12, 4) as i8),
+                                        ImmOrReg::register(bits(s32, 16, 4) as i8),
                                         ImmOrReg::imm(0)),
 
                 0b1111 => context.ldrexd(INST_ACQUIRE,
-                                         register(bits(src as i32, 12, 4) as i8),
-                                         register(bits(src as i32, 8, 4) as i8),
-                                         register(bits(src as i32, 16, 4) as i8)),
+                                         register(bits(s32, 12, 4) as i8),
+                                         register(bits(s32, 8, 4) as i8),
+                                         register(bits(s32, 16, 4) as i8)),
 
                 _ => panic!("thumb load acquire parse fail"),
             },
+
+        //
+        // F3.3.11 Data-processing (Shifted register)
+        //
+
+        0b11101010000_00000_0000000000000000...0b11101010000_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let shift_type = bits(s32, 4, 2);
+
+            if (rd != 0b1111) || !s {
+                let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+                context.and(flags,
+                            register(bits(s32, 8, 4) as i8),
+                            ImmOrReg::register(bits(s32, 16, 4) as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 8, 4) as i8)))
+                
+            } else {
+                context.tst(INST_NORMAL,
+                            register(bits(s32, 16, 4) as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 8, 4) as i8)))
+            }
+        },
+
+        0b11101010001_00000_0000000000000000...0b11101010001_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let shift_type = bits(s32, 4, 2);
             
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+            
+            context.bic(flags,
+                        register(bits(s32, 8, 4) as i8),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(decode_imm_shift(shift_type, imm),
+                                ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            
+        },
+
+        0b11101010010_00000_0000000000000000...0b11101010010_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            if rn != 0b1111 {
+                context.orr(flags,
+                            register(rd as i8),
+                            ImmOrReg::register(rn as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            } else {
+                context.mov(flags,
+                            register(rd as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+
+        0b11101010011_00000_0000000000000000...0b11101010011_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            if rn != 0b1111 {
+                context.orn(flags,
+                            register(rd as i8),
+                            ImmOrReg::register(rn as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            } else {
+                context.mvn(flags,
+                            register(rd as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+
+        0b11101010100_00000_0000000000000000...0b11101010100_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            if (rd != 0b1111) || !s {
+                context.orn(flags,
+                            register(rd as i8),
+                            ImmOrReg::register(rn as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            } else {
+                context.teq(flags,
+                            register(rd as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+
+        0b11101010110_00000_0000000000000000...0b11101010110_11111_1111111111111111 => {
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+
+            let tbform = ((src >> 5) & 1) != 0;
+            let flags = if tbform { INST_TBFORM } else { INST_NORMAL };
+
+            let shift = Shift(if tbform { ShiftType::ASR } else { ShiftType::LSL }, ImmOrReg::imm(imm));
+
+            context.pkh(flags,
+                        register(rd as i8),
+                        register(rn as i8),
+                        Shifted(shift, ImmOrReg::register(bits(s32, 0, 4) as i8)))
+        },
+
+        0b11101011000_00000_0000000000000000...0b11101011000_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            if rn != 0b1111 {
+                context.add(flags,
+                            register(rd as i8),
+                            ImmOrReg::register(rn as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            } else {
+                context.cmn(flags,
+                            register(rd as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+
+        0b11101011010_00000_0000000000000000...0b11101011010_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let rm = bits(s32, 0, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            context.adc(flags,
+                        register(rd as i8),
+                        ImmOrReg::register(rn as i8),
+                        Shifted(decode_imm_shift(shift_type, imm),
+                                ImmOrReg::register(rm as i8)))
+        },
+
+        0b11101011011_00000_0000000000000000...0b11101011011_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let rm = bits(s32, 0, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            context.sbc(flags,
+                        register(rd as i8),
+                        ImmOrReg::register(rn as i8),
+                        Shifted(decode_imm_shift(shift_type, imm),
+                                ImmOrReg::register(rm as i8)))
+        },
+
+        0b11101011101_00000_0000000000000000...0b11101011101_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            if rn != 0b1111 {
+                context.sub(flags,
+                            register(rd as i8),
+                            ImmOrReg::register(rn as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            } else {
+                context.cmp(flags,
+                            register(rd as i8),
+                            Shifted(decode_imm_shift(shift_type, imm),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+
+        0b11101011110_00000_0000000000000000...0b11101011110_11111_1111111111111111 => {
+            let s = ((src >> 20) & 1) != 0;
+            let imm = (bits(s32, 16, 4) << 4) | bits(s32, 0, 4);
+            let rd = bits(s32, 8, 4);
+            let rn = bits(s32, 16, 4);
+            let rm = bits(s32, 0, 4);
+            let shift_type = bits(s32, 4, 2);
+            
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+
+            context.rsb(flags,
+                        register(rd as i8),
+                        ImmOrReg::register(rn as i8),
+                        Shifted(decode_imm_shift(shift_type, imm),
+                                ImmOrReg::register(rm as i8)))
+        },
+
+        //
+        // F3.3.15 - Coprocessor, Advanced SIMD and FP
+        //
+
+        0b111011_0000000000_0000000000000000...0b111011_1111111111_1111111111111111 |
+        0b111111_0000000000_0000000000000000...0b111111_1111111111_1111111111111111 => {
+            let coproc = bits(s32, 8, 4);
+
+            if (coproc & 0b1110) != 0b1010 {
+                // coproc
+
+                
+                
+            } else {
+                // FP
+            }
+
+            context.undefined()
+        },
+        
         _ => context.undefined(),
     }
 }
