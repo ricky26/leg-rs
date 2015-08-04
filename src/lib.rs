@@ -16,14 +16,15 @@ bitflags! {
         const INST_WIDE           = 1 << 5,
 
         // LDM/STM
-        const INST_WRITEBACK      = 1 << 6,
-        const INST_DECREMENT      = 1 << 7,
-        const INST_BEFORE         = 1 << 8,
+        const INST_ACQUIRE        = 1 << 6,
+        const INST_WRITEBACK      = 1 << 7,
+        const INST_DECREMENT      = 1 << 8,
+        const INST_BEFORE         = 1 << 9,
 
         // B
-        const INST_LINK           = 1 << 9,
-        const INST_EXCHANGE       = 1 << 10,
-        const INST_NONZERO        = 1 << 11,
+        const INST_LINK           = 1 << 10,
+        const INST_EXCHANGE       = 1 << 11,
+        const INST_NONZERO        = 1 << 12,
     }
 }
 
@@ -87,6 +88,13 @@ pub enum Register {
     SP,  // R13
     LR,  // R14
     PC,  // R15
+}
+
+#[derive(Copy,Clone,PartialEq,Eq)]
+pub enum StoreDoubleMode {
+    Offset,
+    PostIndex,
+    PreIndex,
 }
 
 impl Register {
@@ -241,9 +249,32 @@ pub trait ExecutionContext {
     
     fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _addr: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _addr: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn tb(&mut self, _flags: InstructionFlags, _table: Register, _index: Register) -> Result<()> { self.undefined() }
 
     fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
     fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    
+    fn strex(&mut self, flags: InstructionFlags, res: Register, src: Register,
+             dest: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> {
+        try!(self.str(flags, src, dest, off));
+        self.mov(INST_NORMAL, res, ImmOrReg::imm(0), Shift::none())
+    }
+    fn ldrex(&mut self, flags: InstructionFlags,
+             dest: Register, src: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> { 
+        self.ldr(flags, dest, src, off)
+    }
+
+    fn strd(&mut self, _flags: InstructionFlags, _mode: StoreDoubleMode,
+            _r0: Register, _r1: Register,
+            _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+    fn ldrd(&mut self, _flags: InstructionFlags, _mode: StoreDoubleMode,
+            _r0: Register, _r1: Register,
+            _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.undefined() }
+
+    fn strexd(&mut self, _flags: InstructionFlags, _res: Register,
+              _r0: Register, _r1: Register, _base: Register) -> Result<()> { self.undefined() }
+    fn ldrexd(&mut self, _flags: InstructionFlags,
+              _r0: Register, _r1: Register, _base: Register) -> Result<()> { self.undefined() }
 
     fn cps(&mut self, _interrupt_enable: bool, _primask: bool, _faultmask: bool) -> Result<()> { self.undefined() }
     fn xt(&mut self, _flags: InstructionFlags, _src: Register, _dest: Register) -> Result<()> { self.undefined() }
@@ -253,8 +284,6 @@ pub trait ExecutionContext {
     fn stm(&mut self, _flags: InstructionFlags, _addr: Register, _registers: u16) -> Result<()> { self.undefined() }
     fn srs(&mut self, _flags: InstructionFlags, _addr: Register, _mode: i8) -> Result<()> { self.undefined() }
     fn rfe(&mut self, _flags: InstructionFlags, _addr: Register) -> Result<()> { self.undefined() }
-
-    fn tb(&mut self, _flags: InstructionFlags) -> Result<()> { self.undefined() }
     
     fn bkpt(&mut self, _val: i8) -> Result<()> { self.undefined() }
     fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) -> Result<()> { self.undefined() }
