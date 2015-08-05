@@ -205,6 +205,25 @@ impl<M: Memory> SimpleEmulator<M> {
         self.set_apsr(apsr)
     }
 
+    pub fn branch(&mut self, link: bool, exchange: bool, jazelle: bool, addr: i32) -> Result<()> {
+        if link {
+            let pc = self.register(Register::PC);
+            self.set_register(Register::LR, pc);
+        }
+
+        if exchange {
+            // TODO: Check whether we need to swap between ARM/THUMB
+        }
+
+        if jazelle {
+            // TODO: Jazelle!
+        }
+
+        self.set_register(Register::PC, addr);
+
+        Ok(())
+    }
+
     pub fn execute_buffer<'a>(&mut self, buffer: &'a [u8]) -> (&'a [u8], Result<()>) {
         // TODO: Check ARM/THUMB mode.
         super::thumb::execute(self, buffer)
@@ -375,8 +394,8 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         Ok(())
     }
     
-    fn str(&mut self, flags: InstructionFlags, src: Register, dest: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> {
-        let addr = self.imm_or_reg(dest) + self.imm_or_reg(off);
+    fn str(&mut self, flags: InstructionFlags, src: Register, dest: ImmOrReg<Word>, off: Shifted) -> Result<()> {
+        let addr = self.imm_or_reg(dest) + self.shifted(off);
         let value = self.register(src);
 
         if flags.get(INST_BYTE) {
@@ -388,8 +407,8 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         }
     }
     
-    fn ldr(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> {
-        let addr = self.imm_or_reg(src) + self.imm_or_reg(off);
+    fn ldr(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, off: Shifted) -> Result<()> {
+        let addr = self.imm_or_reg(src) + self.shifted(off);
         let value;
 
         if flags.get(INST_BYTE) {
@@ -480,33 +499,28 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         Ok(())
     }
 
-    fn b(&mut self, flags: InstructionFlags, cond: Condition, addr: ImmOrReg<Word>) -> Result<()> {
+    fn b(&mut self, flags: InstructionFlags, cond: Condition, base: Register, addr: ImmOrReg<Word>) -> Result<()> {
         if !self.cond(cond) {
             return Ok(())
         }
 
-        let addr = self.imm_or_reg(addr);
-
-        if flags.get(INST_LINK) {
-            let pc = self.register(Register::PC);
-            self.set_register(Register::LR, pc);
-        }
-
-        if flags.get(INST_EXCHANGE) {
-            // TODO: Check whether we need to swap between ARM/THUMB
-        }
-
-        self.set_register(Register::PC, addr);
-
-        Ok(())
+        let addr = self.register(base) + self.imm_or_reg(addr);
+        self.branch(flags.get(INST_LINK),
+                    flags.get(INST_EXCHANGE),
+                    flags.get(INST_JAZELLE),
+                    addr)
     }
     
-    fn cbz(&mut self, flags: InstructionFlags, src: Register, addr: ImmOrReg<Word>) -> Result<()> {
+    fn cbz(&mut self, flags: InstructionFlags, src: Register, base: Register, addr: ImmOrReg<Word>) -> Result<()> {
         let src = self.register(src);
         let cond = if flags.get(INST_NONZERO) { src != 0 } else { src == 0 };
 
         if cond {
-            self.b(flags, Condition::AL, addr)
+            let addr = self.register(base) + self.imm_or_reg(addr);
+            self.branch(flags.get(INST_LINK),
+                        flags.get(INST_EXCHANGE),
+                        flags.get(INST_JAZELLE),
+                        addr)
         } else {
             Ok(())
         }

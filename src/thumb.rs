@@ -283,11 +283,13 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b010001110_0000000...0b010001110_1111111 =>
             context.b(INST_EXCHANGE,
                       Condition::AL,
-                      ImmOrReg::register(((src >> 3) & 0xf) as i8)),
+                      register(((src >> 3) & 0xf) as i8),
+                      ImmOrReg::imm(0)),
         
         0b010001111_0000000...0b010001111_1111111 =>
             context.b(INST_LINK | INST_EXCHANGE,
                       Condition::AL,
+                      Register::PC,
                       ImmOrReg::register(((src >> 3) & 0xf) as i8)),
 
         //
@@ -298,7 +300,8 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.ldr(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::PC),
-                        ImmOrReg::imm(((src & 0xf) as i32) << 2)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src & 0xf) as i32) << 2))),
 
         //
         // Load/Store single data item
@@ -308,100 +311,116 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.str(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101001_000000000...0b0101001_111111111 =>
             context.str(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101010_000000000...0b0101010_111111111 =>
             context.str(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101011_000000000...0b0101011_111111111 =>
             context.ldr(INST_BYTE | INST_SIGNED,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101100_000000000...0b0101100_111111111 =>
             context.ldr(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101101_000000000...0b0101101_111111111 =>
             context.ldr(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101110_000000000...0b0101110_111111111 =>
             context.ldr(INST_BYTE,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101111_000000000...0b0101111_111111111 =>
             context.ldr(INST_HALF | INST_SIGNED,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::register(((src >> 6) & 7) as i8)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::register(((src >> 6) & 7) as i8))),
 
         0b01100_00000000000...0b01100_11111111111 =>
             context.str(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
 
         0b01101_00000000000...0b01101_11111111111 =>
             context.ldr(INST_NORMAL,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
 
         0b01110_00000000000...0b01110_11111111111 =>
             context.str(INST_BYTE,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
         
 
         0b01111_00000000000...0b01111_11111111111 =>
             context.ldr(INST_BYTE,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
 
         0b10000_00000000000...0b10000_11111111111 =>
             context.str(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
         
 
         0b10001_00000000000...0b10001_11111111111 =>
             context.ldr(INST_HALF,
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
-                        ImmOrReg::imm(((src >> 6) & 0x1f) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
 
         0b10010_00000000000...0b10010_11111111111 =>
             context.str(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::SP),
-                        ImmOrReg::imm((src & 0xff) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
         
 
         0b10011_00000000000...0b10011_11111111111 =>
             context.ldr(INST_NORMAL,
                         register(((src >> 8) & 7) as i8),
                         ImmOrReg::Reg(Register::SP),
-                        ImmOrReg::imm((src & 0xff) as i32)),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm((src & 0xff) as i32))),
 
         // ADR
         0b10100_00000000000...0b10100_11111111111 =>
@@ -440,6 +459,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b10110001_00000000...0b10110001_11111111 =>
             context.cbz(INST_NORMAL,
                         register((src & 3) as i8),
+                        Register::PC,
                         ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
 
         0b1011001000_000000...0b1011001000_111111 =>
@@ -465,6 +485,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b10110011_00000000...0b10110011_11111111 =>
             context.cbz(INST_NORMAL,
                         register((src & 3) as i8),
+                        Register::PC,
                         ImmOrReg::imm((((src >> 2) & 0x3e) | 0x40) as i32)),
         
         0b1011010_000000000...0b1011010_111111111 =>
@@ -493,6 +514,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b10111001_00000000...0b10111001_11111111 =>
             context.cbz(INST_NONZERO,
                         register((src & 3) as i8),
+                        Register::PC,
                         ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
         
         0b1011101000_000000...0b1011101000_111111 =>
@@ -516,6 +538,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b10111011_00000000...0b10111011_11111111 =>
             context.cbz(INST_NONZERO,
                         register((src & 3) as i8),
+                        Register::PC,
                         ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
         
         0b1011110_000000000...0b1011110_111111111 =>
@@ -579,11 +602,13 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b1101_000000000000...0b1101_111111111111  =>
             context.b(INST_NORMAL,
                       condition(((src >> 8) & 0xf) as i8),
+                      Register::PC,
                       ImmOrReg::imm(((src & 0xff) << 1) as i32)),
             
         0b11100_00000000000...0b11100_11111111111 =>
             context.b(INST_NORMAL,
                       Condition::AL,
+                      Register::PC,
                       ImmOrReg::imm((((src & 0x3ff) << 2) as i32) >> 1)),
         
         _ => context.undefined("16-bit thumb"),
@@ -710,13 +735,15 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                           register(bits(s32, 8, 4) as i8),
                           register(bits(s32, 12, 4) as i8),
                           ImmOrReg::register(bits(s32, 16, 4) as i8),
-                          ImmOrReg::imm(bits(s32, 0, 8))),
+                          Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 8)))),
         // LDREX
         0b111010000101_0000_0000000000000000...0b111010000101_1111_1111111111111111 =>
             context.ldrex(INST_NORMAL,
                           register(bits(s32, 12, 4) as i8),
                           ImmOrReg::register(bits(s32, 16, 4) as i8),
-                          ImmOrReg::imm(bits(s32, 0, 8))),
+                          Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 8)))),
 
         // STRD
         0b111010000110_0000_0000000000000000...0b111010000110_1111_1111111111111111 |
@@ -725,10 +752,10 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         0b111010011100_0000_0000000000000000...0b111010011100_1111_1111111111111111 |
         0b111010010110_0000_0000000000000000...0b111010010110_1111_1111111111111111 |
         0b111010011110_0000_0000000000000000...0b111010011110_1111_1111111111111111 => {
-            let mode = match (((src >> 23) & 1) != 0, ((src >> 21) & 1) != 0) { // PW
-                (true, false) => StoreDoubleMode::Offset,
-                (false, true) => StoreDoubleMode::PostIndex,
-                (true, true)  => StoreDoubleMode::PreIndex,
+            let flags = match (((src >> 23) & 1) != 0, ((src >> 21) & 1) != 0) { // PW
+                (true, false) => INST_OFFSET,
+                (false, true) => INST_POSTINDEX,
+                (true, true)  => INST_PREINDEX,
                 _ => return context.unpredictable(),
             };
             
@@ -736,7 +763,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             let val = bits(s32, 0, 8);
             let val = if neg { -val } else { val };
 
-            context.strd(INST_NORMAL, mode,
+            context.strd(flags,
                          register(bits(s32, 12, 4) as i8),
                          register(bits(s32, 8, 4) as i8),
                          register(bits(s32, 16, 4) as i8),
@@ -749,10 +776,10 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         0b111010011101_0000_0000000000000000...0b111010011101_1111_1111111111111111 |
         0b111010010111_0000_0000000000000000...0b111010010111_1111_1111111111111111 |
         0b111010011111_0000_0000000000000000...0b111010011111_1111_1111111111111111 => {
-            let mode = match (((src >> 23) & 1) != 0, ((src >> 21) & 1) != 0) { // PW
-                (true, false) => StoreDoubleMode::Offset,
-                (false, true) => StoreDoubleMode::PostIndex,
-                (true, true)  => StoreDoubleMode::PreIndex,
+            let flags = match (((src >> 23) & 1) != 0, ((src >> 21) & 1) != 0) { // PW
+                (true, false) => INST_OFFSET,
+                (false, true) => INST_POSTINDEX,
+                (true, true)  => INST_PREINDEX,
                 _ => return context.unpredictable(),
             };
             
@@ -760,7 +787,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             let val = bits(s32, 0, 8);
             let val = if neg { -val } else { val };
 
-            context.ldrd(INST_NORMAL, mode,
+            context.ldrd(flags,
                          register(bits(s32, 12, 4) as i8),
                          register(bits(s32, 8, 4) as i8),
                          register(bits(s32, 16, 4) as i8),
@@ -773,13 +800,15 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
                 
                 0b0101 => context.strex(INST_HALF,
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
 
                 0b0111 => context.strexd(INST_NORMAL,
                                          register(bits(s32, 0, 4) as i8),
@@ -790,35 +819,41 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                 0b1000 => context.str(INST_BYTE | INST_ACQUIRE,
                                       register(bits(s32, 12, 4) as i8),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                      ImmOrReg::imm(0)),
+                                      Shifted(Shift::none(),
+                                              ImmOrReg::imm(0))),
                 
                 0b1001 => context.str(INST_HALF | INST_ACQUIRE,
                                       register(bits(s32, 12, 4) as i8),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                      ImmOrReg::imm(0)),
+                                      Shifted(Shift::none(),
+                                              ImmOrReg::imm(0))),
                 
                 0b1010 => context.str(INST_ACQUIRE,
                                       register(bits(s32, 12, 4) as i8),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                      ImmOrReg::imm(0)),
+                                      Shifted(Shift::none(),
+                                              ImmOrReg::imm(0))),
 
                 0b1100 => context.strex(INST_BYTE | INST_ACQUIRE,
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
                 
                 0b1101 => context.strex(INST_HALF | INST_ACQUIRE,
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
                 
                 0b1110 => context.strex(INST_ACQUIRE,
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
 
                 0b1111 => context.strexd(INST_ACQUIRE,
                                          register(bits(s32, 0, 4) as i8),
@@ -843,13 +878,15 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
                 
                 0b0101 => context.strex(INST_HALF,
                                         register(bits(s32, 0, 4) as i8),
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
 
                 0b0111 => context.strexd(INST_NORMAL,
                                          register(bits(s32, 0, 4) as i8),
@@ -860,32 +897,38 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                 0b1000 => context.ldr(INST_BYTE | INST_ACQUIRE,
                                       register(bits(s32, 12, 4) as i8),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                      ImmOrReg::imm(0)),
+                                      Shifted(Shift::none(),
+                                              ImmOrReg::imm(0))),
                 
                 0b1001 => context.ldr(INST_HALF | INST_ACQUIRE,
                                       register(bits(s32, 12, 4) as i8),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                      ImmOrReg::imm(0)),
+                                      Shifted(Shift::none(),
+                                              ImmOrReg::imm(0))),
                 
                 0b1010 => context.ldr(INST_ACQUIRE,
                                       register(bits(s32, 12, 4) as i8),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                      ImmOrReg::imm(0)),
+                                      Shifted(Shift::none(),
+                                              ImmOrReg::imm(0))),
 
                 0b1100 => context.ldrex(INST_BYTE | INST_ACQUIRE,
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
                 
                 0b1101 => context.ldrex(INST_HALF | INST_ACQUIRE,
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
                 
                 0b1110 => context.ldrex(INST_ACQUIRE,
                                         register(bits(s32, 12, 4) as i8),
                                         ImmOrReg::register(bits(s32, 16, 4) as i8),
-                                        ImmOrReg::imm(0)),
+                                        Shifted(Shift::none(),
+                                                ImmOrReg::imm(0))),
 
                 0b1111 => context.ldrexd(INST_ACQUIRE,
                                          register(bits(s32, 12, 4) as i8),
@@ -1100,6 +1143,88 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             }
         },
 
+        //
+        // F3.3.4 - Branches and miscellaneous control
+        //
+
+        0b11110_00000000000_0000000000000000...0b11110_11111111111_1111111111111111
+            if (src & 0x5000) == 0x1000 => {
+                // B
+                
+                let s = bits(s32, 16, 1) != 0;
+
+                if bits(s32, 12, 1) == 0 {
+                    let j1 = bits(s32, 13, 1);
+                    let j2 = bits(s32, 11, 1);
+                    let imm = extend_signed(((s as i32) << 20)
+                                            | (j2 << 19)
+                                            | (j1 << 18)
+                                            | (bits(s32, 16, 6) << 12)
+                                            | (bits(s32, 0, 11) << 1), 21);
+
+                    let cond = condition(bits(s32, 22, 4) as i8);
+
+                    context.b(INST_NORMAL,
+                              cond,
+                              Register::PC,
+                              ImmOrReg::imm(imm))
+                } else {
+                    let i1 = !((bits(s32, 13, 1) != 0) ^ s) as i32;
+                    let i2 = !((bits(s32, 11, 1) != 0) ^ s) as i32;
+
+                    let imm = extend_signed(((s as i32) << 24)
+                                            | (i2 << 23)
+                                            | (i1 << 22)
+                                            | (bits(s32, 16, 10) << 12)
+                                            | (bits(s32, 0, 11) << 1), 25);
+
+                    context.b(INST_NORMAL,
+                              Condition::AL,
+                              Register::PC,
+                              ImmOrReg::imm(imm))
+                }
+            },
+        
+        0b11110_00000000000_0000000000000000...0b11110_11111111111_1111111111111111
+            if (src & 0x5000) == 0x4000 => {
+                // BLX
+                let s = bits(s32, 16, 1) != 0;
+                let i1 = !((bits(s32, 13, 1) != 0) ^ s) as i32;
+                let i2 = !((bits(s32, 11, 1) != 0) ^ s) as i32;
+
+                let imm = extend_signed(((s as i32) << 24)
+                                        | (i2 << 23)
+                                        | (i1 << 22)
+                                        | (bits(s32, 16, 10) << 12)
+                                        | (bits(s32, 0, 11) << 1), 25);
+
+                context.b(INST_LINK | INST_EXCHANGE,
+                          Condition::AL,
+                          Register::PC,
+                          ImmOrReg::imm(imm))
+                
+            },
+        
+        0b11110_00000000000_0000000000000000...0b11110_11111111111_1111111111111111
+            if (src & 0x5000) == 0x5000 => {
+                // BL
+                let s = bits(s32, 16, 1) != 0;
+                let i1 = !((bits(s32, 13, 1) != 0) ^ s) as i32;
+                let i2 = !((bits(s32, 11, 1) != 0) ^ s) as i32;
+
+                let imm = extend_signed(((s as i32) << 24)
+                                        | (i2 << 23)
+                                        | (i1 << 22)
+                                        | (bits(s32, 16, 10) << 12)
+                                        | (bits(s32, 0, 11) << 1), 25);
+
+                context.b(INST_LINK,
+                          Condition::AL,
+                          Register::PC,
+                          ImmOrReg::imm(imm))
+                
+            },
+
         0b11110011100_00000_0000000000000000...0b11110011100_11111_1111111111111111 => {
             let rn = register(bits(s32, 16, 4) as i8);
             let write_spsr = bits(s32, 20, 1) != 0;
@@ -1166,7 +1291,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         },
 
         0b111100111100_0000_0000000000000000...0b111100111100_0000_0000000000000000 =>
-            context.b(INST_EXCHANGE | INST_JAZELLE, Condition::AL, ImmOrReg::register(bits(s32, 16, 4) as i8)),
+            context.b(INST_EXCHANGE | INST_JAZELLE, Condition::AL, register(bits(s32, 16, 4) as i8), ImmOrReg::imm(0)),
         
         0b111100111101_0000_0000000000000000...0b111100111101_0000_0000000000000000 => {
             let imm = bits(s32, 0, 8);
@@ -1210,8 +1335,139 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             } else {
                 context.undefined("UDF")
             },
+
+        //
+        // Store single data item
+        //
+
+        0b111110000000_0000_0000000000000000...0b111110000000_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("strb PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.str(flags | INST_BYTE,
+                            rt, ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                           ImmOrReg::imm(imm)))
+            } else {
+                context.str(INST_BYTE, rt,
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
         
-        _ => context.undefined(""),
+        0b111110001000_0000_0000000000000000...0b111110001000_1111_1111111111111111 =>
+            context.str(INST_BYTE,
+                        register(bits(s32, 12, 4) as i8),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        0b111110000010_0000_0000000000000000...0b111110000010_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("strh PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.str(flags | INST_HALF,
+                            rt, ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                           ImmOrReg::imm(imm)))
+            } else {
+                context.str(INST_BYTE, rt,
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+        
+        0b111110001010_0000_0000000000000000...0b111110001010_1111_1111111111111111 =>
+            context.str(INST_HALF,
+                        register(bits(s32, 12, 4) as i8),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        0b111110000100_0000_0000000000000000...0b111110000100_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("strh PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.str(flags,
+                            rt, ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                           ImmOrReg::imm(imm)))
+            } else {
+                context.str(INST_BYTE, rt,
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+        
+        0b111110001100_0000_0000000000000000...0b111110001100_1111_1111111111111111 =>
+            context.str(INST_NORMAL,
+                        register(bits(s32, 12, 4) as i8),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        0b111110000001_0000_0000000000000000...0b111110000001_1111_1111111111111111 => {
+            context.undefined("")
+        },
+        
+        _ => context.undefined("undefined"),
     }
 }
 

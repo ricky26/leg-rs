@@ -40,11 +40,17 @@ bitflags! {
         const INST_TOP            = 1 << 6,
         const INST_BOTTOM         = 1 << 7,
 
+        // LDR/STRd
+        const INST_OFFSET         = 1 << 8,
+        const INST_POSTINDEX      = 1 << 9,
+        const INST_PREINDEX       = 1 << 10,
+        const INST_UNPRIV         = 1 << 11,
+
         // LDM/STM
-        const INST_ACQUIRE        = 1 << 8,
-        const INST_WRITEBACK      = 1 << 9,
-        const INST_DECREMENT      = 1 << 10,
-        const INST_BEFORE         = 1 << 11,
+        const INST_ACQUIRE        = 1 << 11,
+        const INST_WRITEBACK      = 1 << 12,
+        const INST_DECREMENT      = 1 << 13,
+        const INST_BEFORE         = 1 << 14,
 
         // B
         const INST_LINK           = 1 << 12,
@@ -134,14 +140,6 @@ pub enum Register {
 
 pub type CP = i8;
 pub type CPRegister = i8;
-
-#[derive(Copy,Clone,PartialEq,Eq)]
-pub enum StoreDoubleMode {
-    Offset,
-    PostIndex,
-    PreIndex,
-    Unindexed,
-}
 
 impl Register {
     /// Convert from R{x} index, to enum value.
@@ -301,8 +299,8 @@ pub trait ExecutionContext {
     fn mls(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _mul: ImmOrReg<Word>, _sub: ImmOrReg<Word>) -> Result<()> { self.unimplemented("mls") }
 
     // Branching
-    fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _addr: ImmOrReg<Word>) -> Result<()> { self.unimplemented("b") }
-    fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _addr: ImmOrReg<Word>) -> Result<()> { self.unimplemented("cbz") }
+    fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("b") }
+    fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("cbz") }
     fn tb(&mut self, _flags: InstructionFlags, _table: Register, _index: Register) -> Result<()> { self.unimplemented("tb") }
     fn eret(&mut self) -> Result<()> { self.unimplemented("eret") }
 
@@ -312,23 +310,23 @@ pub trait ExecutionContext {
     fn pkh(&mut self, _flags: InstructionFlags, _dest: Register, _a: Register, _b: Shifted) -> Result<()> { self.unimplemented("pkh") }
     
     // Store/Load
-    fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("str") }
-    fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("ldr") }
+    fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<Word>, _off: Shifted) -> Result<()> { self.unimplemented("str") }
+    fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _off: Shifted) -> Result<()> { self.unimplemented("ldr") }
     
     fn strex(&mut self, flags: InstructionFlags, res: Register, src: Register,
-             dest: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> {
+             dest: ImmOrReg<Word>, off: Shifted) -> Result<()> {
         try!(self.str(flags, src, dest, off));
         self.mov(INST_NORMAL, res, Shifted(Shift::none(), ImmOrReg::imm(0)))
     }
     fn ldrex(&mut self, flags: InstructionFlags,
-             dest: Register, src: ImmOrReg<Word>, off: ImmOrReg<Word>) -> Result<()> { 
+             dest: Register, src: ImmOrReg<Word>, off: Shifted) -> Result<()> { 
         self.ldr(flags, dest, src, off)
     }
 
-    fn strd(&mut self, _flags: InstructionFlags, _mode: StoreDoubleMode,
+    fn strd(&mut self, _flags: InstructionFlags,
             _r0: Register, _r1: Register,
             _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("strd") }
-    fn ldrd(&mut self, _flags: InstructionFlags, _mode: StoreDoubleMode,
+    fn ldrd(&mut self, _flags: InstructionFlags,
             _r0: Register, _r1: Register,
             _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("ldrd") }
 
