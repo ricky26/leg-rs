@@ -275,8 +275,8 @@ impl<M: Memory> SimpleEmulator<M> {
 
 
 impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
-    fn undefined(&mut self) -> Result<()> {
-        panic!("undefined @ {}", self.register(Register::PC))
+    fn undefined(&mut self, msg: &str) -> Result<()> {
+        panic!("undefined {} @ {}", msg, self.register(Register::PC))
     }
     fn unpredictable(&mut self) -> Result<()> {
         panic!("unpredictable @ {}", self.register(Register::PC))
@@ -292,12 +292,6 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         Ok(())
     }
     
-    fn adr(&mut self, dest: Register, offset: ImmOrReg<Word>) -> Result<()> {
-        let val = self.register(Register::PC) + self.imm_or_reg(offset);
-        self.set_register(dest, val);
-        Ok(())
-    }
-
     // Add/subtract
     fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
         let a = self.imm_or_reg(src);

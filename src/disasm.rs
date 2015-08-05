@@ -12,8 +12,8 @@ impl<'a> Disassembler<'a> {
 }
 
 impl<'a> ExecutionContext for Disassembler<'a> {
-    fn undefined(&mut self) -> Result<()> {
-        try!(writeln!(self.0, "undefined instruction"));
+    fn undefined(&mut self, msg: &str) -> Result<()> {
+        try!(writeln!(self.0, "undefined instruction: {}", msg));
         Ok(())
     }
     
@@ -25,10 +25,6 @@ impl<'a> ExecutionContext for Disassembler<'a> {
     // Move
     fn mov(&mut self, flags: InstructionFlags, dest: Register, src: Shifted) -> Result<()> {
         try!(writeln!(self.0, "MOV{} {}, {}", flags, dest, src));
-        Ok(())
-    }
-    fn adr(&mut self, dest: Register, offset: ImmOrReg<i32>) -> Result<()> {
-        try!(writeln!(self.0, "ADR {}, {}", dest, offset));
         Ok(())
     }
 
