@@ -102,7 +102,7 @@ impl<M: Memory> SimpleEmulator<M> {
 
     pub fn shift(&self, src: Word, shift: Shift) -> Word {
         match (shift.0, self.imm_or_reg(shift.1)) {
-            (ShiftType::None, x) => x,
+            (ShiftType::None, _) => src,
             (ShiftType::LSL, x) => src << x,
             (ShiftType::LSR, x) => ((src as u32) << (x as u32)) as Word,
             (ShiftType::ASR, x) => src >> x,
@@ -229,7 +229,7 @@ impl<M: Memory> SimpleEmulator<M> {
             }
         }
 
-        //try!(self.print_state());
+        try!(self.print_state());
         
         err
     }

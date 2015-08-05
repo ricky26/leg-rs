@@ -28,6 +28,11 @@ bitflags! {
 
         // PKH
         const INST_TBFORM         = 1 << 9,
+
+        // STC
+        const INST_ALT            = 1 << 9,
+        const INST_PREINC         = 1 << 10,
+        const INST_LONG           = 1 << 11,
     }
 }
 
@@ -92,6 +97,9 @@ pub enum Register {
     LR,  // R14
     PC,  // R15
 }
+
+pub type CP = i8;
+pub type CPRegister = i8;
 
 #[derive(Copy,Clone,PartialEq,Eq)]
 pub enum StoreDoubleMode {
@@ -320,6 +328,25 @@ pub trait ExecutionContext {
     fn dsb(&mut self) -> Result<()> { Ok(()) }
     fn dmb(&mut self) -> Result<()> { Ok(()) }
     fn isb(&mut self) -> Result<()> { Ok(()) }
+
+    // Coprocessor
+
+    fn stc(&mut self, _flags: InstructionFlags, _coproc: CP, _reg: CPRegister,
+           _base: Register, _offset: ImmOrReg<Word>, _option: u8) -> Result<()> { self.undefined() }
+    fn ldc(&mut self, _flags: InstructionFlags, _coproc: CP, _reg: CPRegister,
+           _base: Register, _offset: ImmOrReg<Word>, _option: u8) -> Result<()> { self.undefined() }
+    fn mcr(&mut self, _flags: InstructionFlags, _coproc: CP, _target: Register,
+           _r0: CPRegister, _opcode0: i8,
+           _r1: CPRegister, _opcode1: i8) -> Result<()> { self.undefined() }
+    fn mrc(&mut self, _flags: InstructionFlags, _coproc: CP, _target: Register,
+           _r0: CPRegister, _opcode0: i8,
+           _r1: CPRegister, _opcode1: i8) -> Result<()> { self.undefined() }
+    fn mcrr(&mut self, _flags: InstructionFlags, _coproc: CP, _opcode: i8, _reg: CPRegister,
+            _r0: Register, _r1: Register) -> Result<()> { self.undefined() }
+    fn mrrc(&mut self, _flags: InstructionFlags, _coproc: CP, _opcode: i8, _reg: CPRegister,
+            _r0: Register, _r1: Register) -> Result<()> { self.undefined() }
+    fn cdp(&mut self, _flags: InstructionFlags, _coproc: CP, _dest: CPRegister,
+           _opcode0: i8, _r0: CPRegister, _opcode1: i8, _r1: CPRegister) -> Result<()> { self.undefined() }
 }
 
 /// ARM Emulator error.

@@ -1053,21 +1053,104 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         //
         // F3.3.15 - Coprocessor, Advanced SIMD and FP
         //
-
+        
         0b111011_0000000000_0000000000000000...0b111011_1111111111_1111111111111111 |
         0b111111_0000000000_0000000000000000...0b111111_1111111111_1111111111111111 => {
             let coproc = bits(s32, 8, 4);
 
             if (coproc & 0b1110) != 0b1010 {
                 // coproc
+                
+                let alt = ((src >> 28) & 1) != 0;
+                let flags = if alt { INST_ALT } else { INST_NORMAL };
+                let coproc = coproc as i8;
+                
+                match bits(s32, 20, 6) {
+                    0b000100...0b000101 => {
+                        let crm = bits(s32, 0, 4) as i8;
+                        let opcode = bits(s32, 4, 4) as i8;
+                        let rt = register(bits(s32, 12, 4) as i8);
+                        let rt2 = register(bits(s32, 16, 4) as i8);
+                        
+                        let l = ((src >> 20) & 1) != 0;
+                        
+                        if !l {
+                            context.mcrr(flags, coproc, opcode, crm, rt, rt2)
+                        } else {
+                            context.mcrr(flags, coproc, opcode, crm, rt, rt2)
+                        }
+                    },
+                    
+                    0b0_00000...0b0_11111 => {
+                        let p = ((src >> 24) & 1) != 0;
+                        let u = ((src >> 23) & 1) != 0;
+                        let d = ((src >> 22) & 1) != 0;
+                        let w = ((src >> 21) & 1) != 0;
+                        let l = ((src >> 20) & 1) != 0;
 
-                
-                
+                        let imm = bits(s32, 0, 8) << 2;
+
+                        let flags = flags | if d { INST_LONG } else { INST_NORMAL };
+                        let flags = flags | if p && w { INST_WRITEBACK } else { INST_NORMAL };
+                        let flags = flags | if !p { INST_PREINC } else { INST_NORMAL };
+
+                        let crd = bits(s32, 12, 4) as i8;
+
+                        let (imm, option) = if p || !u || w {
+                            (imm, 0u8)
+                        } else {
+                            (0, imm as u8)
+                        };
+
+                        if !l {
+                            context.stc(flags,
+                                        coproc,
+                                        crd,
+                                        register(bits(s32, 16, 4) as i8),
+                                        ImmOrReg::imm(imm),
+                                        option)
+                        } else {
+                            context.ldc(flags,
+                                        coproc,
+                                        crd,
+                                        register(bits(s32, 16, 4) as i8),
+                                        ImmOrReg::imm(imm),
+                                        option)
+                        }
+                    },
+
+                    0b10_0000...0b10_1111 => {
+                        if ((s32 >> 4) & 1) != 0 {
+                            let l = ((src >> 20) & 1) != 0;
+                            let crm = bits(s32, 0, 4) as i8;
+                            let crn = bits(s32, 16, 4) as i8;
+                            let opc1 = bits(s32, 5, 3) as i8;
+                            let opc2 = bits(s32, 21, 3) as i8;
+                            let rc = register(bits(s32, 12, 4) as i8);
+
+                            if l {
+                                context.mrc(flags, coproc, rc, opc1, crn, opc2, crm)
+                            } else {
+                                context.mcr(flags, coproc, rc, opc1, crn, opc2, crm)
+                            }
+                        } else {
+                            let crm = bits(s32, 0, 4) as i8;
+                            let crn = bits(s32, 16, 4) as i8;
+                            let crd = bits(s32, 12, 4) as i8;
+                            
+                            let opc1 = bits(s32, 5, 3) as i8;
+                            let opc2 = bits(s32, 20, 4) as i8;
+
+                            context.cdp(flags, coproc, crd, opc2, crm, opc1, crn)
+                        }
+                    },
+
+                    _ => context.undefined(),
+                }
             } else {
                 // FP
+                context.undefined()
             }
-
-            context.undefined()
         },
         
         _ => context.undefined(),
