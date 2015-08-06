@@ -49,7 +49,8 @@ bitflags! {
         // B
         const INST_LINK           = 1 << 12,
         const INST_EXCHANGE       = 1 << 13,
-        const INST_NONZERO        = 1 << 14,
+        const INST_JAZELLE        = 1 << 14,
+        const INST_NONZERO        = 1 << 15,
 
         // PKH
         const INST_TBFORM         = 1 << 11,
@@ -58,6 +59,14 @@ bitflags! {
         const INST_ALT            = 1 << 11,
         const INST_PREINC         = 1 << 12,
         const INST_LONG           = 1 << 13,
+
+        // CPS
+        const INST_INTENABLE      = 1 << 1,
+        const INST_INTDISABLE     = 1 << 2,
+        const INST_CHANGEMODE     = 1 << 3,
+        const INST_PSTATEA        = 1 << 4,
+        const INST_PSTATEI        = 1 << 5,
+        const INST_PSTATEF        = 1 << 6,
     }
 }
 
@@ -295,6 +304,7 @@ pub trait ExecutionContext {
     fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _addr: ImmOrReg<Word>) -> Result<()> { self.unimplemented("b") }
     fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _addr: ImmOrReg<Word>) -> Result<()> { self.unimplemented("cbz") }
     fn tb(&mut self, _flags: InstructionFlags, _table: Register, _index: Register) -> Result<()> { self.unimplemented("tb") }
+    fn eret(&mut self) -> Result<()> { self.unimplemented("eret") }
 
     // Bytes
     fn xt(&mut self, _flags: InstructionFlags, _src: Register, _dest: Register) -> Result<()> { self.unimplemented("xt") }
@@ -334,7 +344,7 @@ pub trait ExecutionContext {
 
     // System
     
-    fn cps(&mut self, _interrupt_enable: bool, _primask: bool, _faultmask: bool) -> Result<()> { self.unimplemented("cps") }
+    fn cps(&mut self, _flags: InstructionFlags, _mode: i8) -> Result<()> { self.unimplemented("cps") }
     fn bkpt(&mut self, _val: i8) -> Result<()> { self.unimplemented("bkpt") }
     fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) -> Result<()> { self.unimplemented("it") }
     fn nop(&mut self) -> Result<()> { Ok(()) }
@@ -344,9 +354,12 @@ pub trait ExecutionContext {
     fn sev(&mut self, _local: bool) -> Result<()> { Ok(()) }
     fn svc(&mut self, _svc: i8) -> Result<()> { self.unimplemented("svc") }
     fn hlt(&mut self, _info: i8) -> Result<()> { self.unimplemented("hlt") }
+    fn dbg(&mut self, _info: i8) -> Result<()> { self.unimplemented("dbg") }
+    fn hvc(&mut self, _call: i16) -> Result<()> { self.unimplemented("hvc") }
+    fn smc(&mut self, _call: i8) -> Result<()> { self.unimplemented("smc") }
 
-    fn msr(&mut self, _dest: Register, _src: i8) -> Result<()> { self.unimplemented("msr") }
-    fn mrs(&mut self, _src: Register, _dest: i8) -> Result<()> { self.unimplemented("mrs") }
+    fn msr(&mut self, _flags: InstructionFlags, _src: Register, _dest: i8, _mask: i8) -> Result<()> { self.unimplemented("msr") }
+    fn mrs(&mut self, _flags: InstructionFlags, _dest: Register, _src: i8) -> Result<()> { self.unimplemented("mrs") }
 
     fn setend(&mut self, _big_endian: bool) -> Result<()> { self.unimplemented("setend") }
 

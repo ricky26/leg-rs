@@ -475,10 +475,20 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         0b10110110010_00000...0b10110110010_11111 =>
             context.setend(bits(src as i32, 3, 1) != 0),
         
-        0b10110110011_00000...0b10110110011_11111 =>
-            context.cps((src & 0x10) != 0,
-                        (src & 0x02) != 0,
-                        (src & 0x01) != 0),
+        0b10110110011_00000...0b10110110011_11111 => {
+            let mut flags = INST_NORMAL;
+            if (src & 0x4) != 0 {
+                flags = flags | INST_PSTATEA
+            }
+            if (src & 0x2) != 0 {
+                flags = flags | INST_PSTATEI
+            }
+            if (src & 0x1) != 0 {
+                flags = flags | INST_PSTATEF
+            }
+            
+            context.cps(flags, 0)
+        },
 
         0b10111001_00000000...0b10111001_11111111 =>
             context.cbz(INST_NONZERO,
@@ -1089,10 +1099,117 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                 }
             }
         },
-        
-        0b11110_00000000000_0000000000000000...0b11110_11111111111_1111111111111111 => {
-            context.unimplemented("branches")
+
+        0b11110011100_00000_0000000000000000...0b11110011100_11111_1111111111111111 => {
+            let rn = register(bits(s32, 16, 4) as i8);
+            let write_spsr = bits(s32, 20, 1) != 0;
+            let flags = if write_spsr { INST_WRITEBACK } else { INST_NORMAL };
+            
+            if bits(s32, 5, 1) != 0 {
+                // MSR (banked register)
+                let src = ((write_spsr as i32) << 5) | (bits(s32, 4, 1) << 4) | bits(s32, 8, 4);
+
+                context.msr(flags, rn, src as i8, !0)
+            } else {
+                // MSR (special register)
+
+                let src = if write_spsr { 2 << 6 } else { 3 << 6 };
+                let mask = bits(s32, 8, 4) as i8;
+
+                context.msr(flags, rn, src, mask)
+            }
         },
+
+        0b111100111010_0000_0000000000000000...0b111100111010_1111_1111111111111111 => {
+            let op1 = bits(s32, 8, 3);
+            let op2 = bits(s32, 0, 8);
+
+            if op1 == 0 {
+                let mut flags = INST_NORMAL;
+                if (src & 0x100) != 0 {
+                    flags = flags | INST_CHANGEMODE
+                }
+                if (src & 0x80) != 0 {
+                    flags = flags | INST_PSTATEA
+                }
+                if (src & 0x40) != 0 {
+                    flags = flags | INST_PSTATEI
+                }
+                if (src & 0x20) != 0 {
+                    flags = flags | INST_PSTATEF
+                }
+            
+                context.cps(flags, bits(s32, 0, 5) as i8)
+            } else {
+                match op2 {
+                    0b00000000 => context.nop(),
+                    0b00000001 => context.yld(),
+                    0b00000010 => context.wfe(),
+                    0b00000011 => context.wfi(),
+                    0b00000100 => context.sev(false),
+                    0b00000101 => context.sev(true),
+                    0b11110000...0b11111111 => context.dbg(op2 as i8),
+                    _ => context.undefined("hints"),
+                }
+            }
+        },
+
+        0b111100111011_0000_0000000000000000...0b111100111011_1111_1111111111111111 => {
+            match bits(s32, 4, 4) {
+                0b0010 => context.clrex(),
+                0b0100 => context.dsb(),
+                0b0101 => context.dmb(),
+                0b0110 => context.isb(),
+
+                _ => context.undefined("miscellaneous control"),
+            }
+        },
+
+        0b111100111100_0000_0000000000000000...0b111100111100_0000_0000000000000000 =>
+            context.b(INST_EXCHANGE | INST_JAZELLE, Condition::AL, ImmOrReg::register(bits(s32, 16, 4) as i8)),
+        
+        0b111100111101_0000_0000000000000000...0b111100111101_0000_0000000000000000 => {
+            let imm = bits(s32, 0, 8);
+            if imm == 0 {
+                context.eret()
+            } else {
+                context.sub(INST_SET_FLAGS,
+                            Register::PC,
+                            ImmOrReg::Reg(Register::LR),
+                            Shifted(Shift::none(),
+                                    ImmOrReg::imm(imm)))
+            }
+        },
+
+        0b11110011111_00000_0000000000000000...0b11110011111_11111_1111111111111111 => {
+            let rn = register(bits(s32, 16, 4) as i8);
+            let write_spsr = bits(s32, 20, 1) != 0;
+            let flags = if write_spsr { INST_WRITEBACK } else { INST_NORMAL };
+            
+            if bits(s32, 5, 1) != 0 {
+                // MSR (banked register)
+                let src = ((write_spsr as i32) << 5) | (bits(s32, 4, 1) << 4) | bits(s32, 8, 4);
+                context.mrs(flags, rn, src as i8)
+            } else {
+                // MSR (special register)
+                let src = if write_spsr { 2 << 6 } else { 3 << 6 };
+                context.mrs(flags, rn, src)
+            }
+        },
+        
+
+        0b111101111000_0000_0000000000000000...0b111101111000_1111_1111111111111111 =>
+            context.undefined("debug set state"),
+        
+        0b111101111110_0000_0000000000000000...0b111101111110_1111_1111111111111111 =>
+            context.hvc(((bits(s32, 16, 4) << 4) | bits(s32, 0, 12)) as i16),
+        
+        0b111101111111_0000_0000000000000000...0b111101111111_1111_1111111111111111 =>
+            if bits(s32, 13, 1) == 0 {
+                context.smc(bits(s32, 16, 4) as i8)
+            } else {
+                context.undefined("UDF")
+            },
         
         _ => context.undefined(""),
     }
