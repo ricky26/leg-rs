@@ -1,10 +1,12 @@
 extern crate leg;
+use std::io::Read;
 
 struct Memory([u8;128]);
 
 fn copy_memory(src: &[u8], dest: &mut [u8]) {
     for x in 0.. {
         if (x >= src.len()) || (x >= dest.len()) {
+            println!("exiting at {}", x);
             break
         }
 
@@ -41,24 +43,14 @@ impl leg::simple::Memory for Memory {
 
 fn main() {
     let mut emu = leg::simple::SimpleEmulator::<Memory>::new(Memory([0u8;128]));
-    
-    
-    emu.set_register(leg::Register::R0, 20);
-    emu.set_register(leg::Register::R4, 22);
-    println!("{:?}", leg::thumb::execute(&mut emu, &[0x19, 0x00]));
-    println!("{:?}", emu.register(leg::Register::R0));
 
-    
-    copy_memory(&[0xbf, 0x30,
-                  0x30, 0x01,
-                  0x47, 0x70],
-                &mut emu.memory.0);
+    let vec = {
+        let mut f = std::fs::File::open(std::env::args().next().unwrap()).unwrap();
+        let mut vec = Vec::new();
+        f.read_to_end(&mut vec);
+        vec
+    };
+
+    copy_memory(&vec, &mut emu.memory.0);
     println!("{:?}", emu.execute());
-    
-    let mut disas = String::new();
-    println!("{:?}", leg::thumb::disassemble(&mut disas, &[0xb5, 0x80,
-                                                           0xaf, 0x00,
-                                                           0x46, 0xbd,
-                                                           0xbd, 0x80]));
-    println!("{}", disas);
 }

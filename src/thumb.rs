@@ -6,8 +6,8 @@ use super::*;
 use super::{register, condition, extend_signed};
 use super::disasm::Disassembler;
 
-#[inline]
 /// Extract bits from a source integer.
+#[inline]
 fn bits<T>(src: T, start: T, count: T) -> T
     where T: Int
 {
@@ -15,19 +15,30 @@ fn bits<T>(src: T, start: T, count: T) -> T
 }
 
 #[inline]
+fn decode_shift_type(op: Word) -> ShiftType {
+    match op {
+        0b00 => ShiftType::LSL,
+        0b01 => ShiftType::LSR,
+        0b10 => ShiftType::ASR,
+        0b11 => ShiftType::ROR,
+        
+        _ => panic!("invalid imm shift"),
+    }
+}
+
 /// Decode the immediate shift operand into a Shift struct.
 /// (Which can be used later to shift calculated values.)
+#[inline]
 fn decode_imm_shift(op: Word, imm: Word) -> Shift {
-    match op {
-        0b00 => Shift(ShiftType::LSL, ImmOrReg::imm(imm)),
-        0b01 => Shift(ShiftType::LSR, ImmOrReg::imm(if imm == 0 { 32 } else { imm })),
-        0b10 => Shift(ShiftType::ASR, ImmOrReg::imm(if imm == 0 { 32 } else { imm })),
-        0b11 => if imm == 0 {
+    match decode_shift_type(op) {
+        ShiftType::LSR => Shift(ShiftType::LSR, ImmOrReg::imm(if imm == 0 { 32 } else { imm })),
+        ShiftType::ASR => Shift(ShiftType::ASR, ImmOrReg::imm(if imm == 0 { 32 } else { imm })),
+        ShiftType::ROR => if imm == 0 {
             Shift(ShiftType::RRX, ImmOrReg::imm(1))
         } else {
             Shift(ShiftType::ROR, ImmOrReg::imm(imm))
         },
-        _ => panic!("invalid imm shift"),
+        x => Shift(x, ImmOrReg::imm(imm)),
     }
 }
 
@@ -42,6 +53,11 @@ fn decode_reg_shift(op: Word, reg: Register) -> Shift {
     }
 }
 
+pub fn is_32bit(buffer: &[u8]) -> bool {
+    ((buffer[0] & 0xe0) == 0xe0)
+        && ((buffer[0] & 0x18) != 0)
+}
+
 /// Execute up to one THUMB instruction.
 pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a [u8]) -> (&'a [u8], Result<()>) {
     if buffer.len() < 2  {
@@ -49,8 +65,7 @@ pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a
     }
 
     // Check whether we've got a 32-bit instruction
-    let is_16bit = ((buffer[0] & 0xe0) != 0xe0)
-        || ((buffer[0] & 0x18) == 0);
+    let is_16bit = ! is_32bit(buffer);
 
     // If so, check we have enough bytes
     if !is_16bit && (buffer.len() < 4) {
@@ -298,7 +313,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
         0b01001_00000000000...0b01001_11111111111 =>
             context.ldr(INST_NORMAL,
-                        register(((src >> 8) & 7) as i8),
+                        Some(register(((src >> 8) & 7) as i8)),
                         ImmOrReg::Reg(Register::PC),
                         Shifted(Shift::none(),
                                 ImmOrReg::imm(((src & 0xf) as i32) << 2))),
@@ -330,35 +345,35 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         
         0b0101011_000000000...0b0101011_111111111 =>
             context.ldr(INST_BYTE | INST_SIGNED,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101100_000000000...0b0101100_111111111 =>
             context.ldr(INST_NORMAL,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101101_000000000...0b0101101_111111111 =>
             context.ldr(INST_HALF,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101110_000000000...0b0101110_111111111 =>
             context.ldr(INST_BYTE,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::register(((src >> 6) & 7) as i8))),
         
         0b0101111_000000000...0b0101111_111111111 =>
             context.ldr(INST_HALF | INST_SIGNED,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::register(((src >> 6) & 7) as i8))),
@@ -372,7 +387,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
         0b01101_00000000000...0b01101_11111111111 =>
             context.ldr(INST_NORMAL,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
@@ -387,7 +402,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
         0b01111_00000000000...0b01111_11111111111 =>
             context.ldr(INST_BYTE,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
@@ -402,7 +417,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
         0b10001_00000000000...0b10001_11111111111 =>
             context.ldr(INST_HALF,
-                        register((src & 7) as i8),
+                        Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
                                 ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
@@ -417,7 +432,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
         0b10011_00000000000...0b10011_11111111111 =>
             context.ldr(INST_NORMAL,
-                        register(((src >> 8) & 7) as i8),
+                        Some(register(((src >> 8) & 7) as i8)),
                         ImmOrReg::Reg(Register::SP),
                         Shifted(Shift::none(),
                                 ImmOrReg::imm((src & 0xff) as i32))),
@@ -895,19 +910,19 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                                          register(bits(s32, 16, 4) as i8)),
 
                 0b1000 => context.ldr(INST_BYTE | INST_ACQUIRE,
-                                      register(bits(s32, 12, 4) as i8),
+                                      Some(register(bits(s32, 12, 4) as i8)),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       Shifted(Shift::none(),
                                               ImmOrReg::imm(0))),
                 
                 0b1001 => context.ldr(INST_HALF | INST_ACQUIRE,
-                                      register(bits(s32, 12, 4) as i8),
+                                      Some(register(bits(s32, 12, 4) as i8)),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       Shifted(Shift::none(),
                                               ImmOrReg::imm(0))),
                 
                 0b1010 => context.ldr(INST_ACQUIRE,
-                                      register(bits(s32, 12, 4) as i8),
+                                      Some(register(bits(s32, 12, 4) as i8)),
                                       ImmOrReg::register(bits(s32, 16, 4) as i8),
                                       Shifted(Shift::none(),
                                               ImmOrReg::imm(0))),
@@ -1408,7 +1423,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                             rt, ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                            ImmOrReg::imm(imm)))
             } else {
-                context.str(INST_BYTE, rt,
+                context.str(INST_HALF, rt,
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
                                     ImmOrReg::register(bits(s32, 0, 4) as i8)))
@@ -1449,7 +1464,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                             rt, ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                            ImmOrReg::imm(imm)))
             } else {
-                context.str(INST_BYTE, rt,
+                context.str(INST_NORMAL, rt,
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
                                     ImmOrReg::register(bits(s32, 0, 4) as i8)))
@@ -1463,9 +1478,253 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                         Shifted(Shift::none(),
                                 ImmOrReg::imm(bits(s32, 0, 12)))),
 
+        //
+        // Load byte
+        //
+
         0b111110000001_0000_0000000000000000...0b111110000001_1111_1111111111111111 => {
-            context.undefined("")
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("ldrb PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.ldr(flags | INST_BYTE,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                       ImmOrReg::imm(imm)))
+            } else {
+                context.ldr(INST_BYTE, if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
         },
+        
+        0b111110001001_0000_0000000000000000...0b111110001001_1111_1111111111111111 =>
+            context.ldr(INST_BYTE,
+                        Some(register(bits(s32, 12, 4) as i8)),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        0b111110010001_0000_0000000000000000...0b111110010001_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("ldrsb PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.ldr(flags | INST_BYTE | INST_SIGNED,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                       ImmOrReg::imm(imm)))
+            } else {
+                context.ldr(INST_BYTE | INST_SIGNED,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+        
+        0b111110011001_0000_0000000000000000...0b111110011001_1111_1111111111111111 =>
+            context.ldr(INST_BYTE | INST_SIGNED,
+                        Some(register(bits(s32, 12, 4) as i8)),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        //
+        // Load half
+        //
+
+        0b111110000011_0000_0000000000000000...0b111110000011_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("ldrb PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.ldr(flags | INST_HALF,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                       ImmOrReg::imm(imm)))
+            } else {
+                context.ldr(INST_HALF, if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+        
+        0b111110001011_0000_0000000000000000...0b111110001011_1111_1111111111111111 =>
+            context.ldr(INST_HALF,
+                        Some(register(bits(s32, 12, 4) as i8)),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        0b111110010011_0000_0000000000000000...0b111110010011_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("ldrsb PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.ldr(flags | INST_HALF | INST_SIGNED,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                       ImmOrReg::imm(imm)))
+            } else {
+                context.ldr(INST_HALF | INST_SIGNED,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+        
+        0b111110011011_0000_0000000000000000...0b111110011011_1111_1111111111111111 =>
+            context.ldr(INST_HALF | INST_SIGNED,
+                        Some(register(bits(s32, 12, 4) as i8)),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        //
+        // Load Word
+        //
+        
+        0b111110000101_0000_0000000000000000...0b111110000101_1111_1111111111111111 => {
+            let rt = register(bits(s32, 12, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
+            
+            if bits(s32, 11, 1) != 0 {
+                let neg = !(bits(s32, 9, 1) != 0);
+                let mut flags = match (bits(s32, 10, 1) != 0,
+                                       bits(s32, 8, 1) != 0) { // PW
+                    (true, false) => INST_OFFSET,
+                    (false, true) => INST_PREINDEX,
+                    (true, true)  => INST_POSTINDEX,
+                    _ => { return context.undefined("ldrb PW") },
+                };
+
+                if !neg && (flags == INST_OFFSET) {
+                    flags = INST_UNPRIV
+                }
+
+                let mut imm = bits(s32, 0, 8);
+                if neg {
+                    imm = -imm
+                }
+                
+                context.ldr(flags,
+                            if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn), Shifted(Shift::none(),
+                                                       ImmOrReg::imm(imm)))
+            } else {
+                context.ldr(INST_NORMAL, if rt == Register::PC { None } else { Some(rt) },
+                            ImmOrReg::Reg(rn),
+                            Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
+                                    ImmOrReg::register(bits(s32, 0, 4) as i8)))
+            }
+        },
+        
+        0b111110001101_0000_0000000000000000...0b111110001101_1111_1111111111111111 =>
+            context.ldr(INST_NORMAL,
+                        Some(register(bits(s32, 12, 4) as i8)),
+                        ImmOrReg::register(bits(s32, 16, 4) as i8),
+                        Shifted(Shift::none(),
+                                ImmOrReg::imm(bits(s32, 0, 12)))),
+
+        //
+        // Data-processing (register)
+        //
+
+        0b11111010000_00000_0000000000000000...0b11111010000_11111_1111111111111111 => {
+            let s = bits(s32, 20, 1) != 0;
+            let flags = if s { INST_SET_FLAGS } else { INST_NORMAL };
+            
+            context.mov(flags,
+                        register(bits(s32, 8, 4) as i8),
+                        Shifted(Shift(decode_shift_type(bits(s32, 21, 2)),
+                                      ImmOrReg::register(bits(s32, 0, 4) as i8)),
+                                ImmOrReg::register(bits(s32, 16, 4) as i8)))
+        },
+
+        //
+        // Miscellanous operations
+        //
+
+        0b111110101011_0000_0000000000000000...0b111110101011_1111_1111111111111111 =>
+            context.clz(INST_NORMAL,
+                        register(bits(s32, 8, 4) as i8),
+                        register(bits(s32, 16, 4) as i8)),
         
         _ => context.undefined("undefined"),
     }

@@ -72,6 +72,7 @@ pub struct SimpleEmulator<M: Memory> {
     apsr: u32,
     itt_mask: u8,
     itt_count: i8,
+    itt_cond: Condition,
 }
 
 impl<M: Memory> SimpleEmulator<M> {
@@ -82,6 +83,7 @@ impl<M: Memory> SimpleEmulator<M> {
             memory: memory,
             itt_mask: 0u8,
             itt_count: 0,
+            itt_cond: Condition::AL,
         }
     }
 
@@ -223,30 +225,35 @@ impl<M: Memory> SimpleEmulator<M> {
 
         Ok(())
     }
-
-    pub fn execute_buffer<'a>(&mut self, buffer: &'a [u8]) -> (&'a [u8], Result<()>) {
-        // TODO: Check ARM/THUMB mode.
-        super::thumb::execute(self, buffer)
-    }
-
+    
     pub fn execute_one(&mut self) -> Result<()> {
         let mut buf = [0u8; 4];
         let mut pc = self.register(Register::PC);
 
+        // TODO: ARM vs THUMB mode
+
         try!(self.memory.read(pc as u64, &mut buf[..2]));
         pc += 2;
-        self.set_register(Register::PC, pc);
 
-        let (_, mut err) = self.execute_buffer(&mut buf[..2]);
-        if let Err(Error::NotEnoughInput(_)) = err {
+        if thumb::is_32bit(&buf) {
             try!(self.memory.read(pc as u64, &mut buf[2..4]));
             pc += 2;
-            self.set_register(Register::PC, pc);
-            
-            match self.execute_buffer(&mut buf[..4]) {
-                (_, e) => { err = e; },
+        }
+        
+        self.set_register(Register::PC, pc);
+
+        if self.itt_count > 0 {
+            let skip = ((self.itt_mask & 1) != 0) ^ self.cond(self.itt_cond);
+            self.itt_mask >>= 1;
+            self.itt_count -= 1;
+
+            if skip {
+                try!(self.print_state());
+                return Ok(())
             }
         }
+
+        let (_, err) = super::thumb::execute(self, &mut buf);
 
         try!(self.print_state());
         
@@ -407,7 +414,7 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         }
     }
     
-    fn ldr(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, off: Shifted) -> Result<()> {
+    fn ldr(&mut self, flags: InstructionFlags, dest: Option<Register>, src: ImmOrReg<Word>, off: Shifted) -> Result<()> {
         let addr = self.imm_or_reg(src) + self.shifted(off);
         let value;
 
@@ -418,8 +425,11 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         } else {
             value = try!(self.memory.read_u32(addr as u64)) as i32;
         }
+
+        if let Some(dest) = dest {
+            self.set_register(dest, value)
+        }
         
-        self.set_register(dest, value);
         Ok(())
     }
     

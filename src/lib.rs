@@ -40,7 +40,7 @@ bitflags! {
         const INST_TOP            = 1 << 6,
         const INST_BOTTOM         = 1 << 7,
 
-        // LDR/STRd
+        // LDR/STR
         const INST_OFFSET         = 1 << 8,
         const INST_POSTINDEX      = 1 << 9,
         const INST_PREINDEX       = 1 << 10,
@@ -289,7 +289,7 @@ pub trait ExecutionContext {
     fn bic(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.unimplemented("bic") }
     fn mvn(&mut self, _flags: InstructionFlags, _dest: Register, _src: Shifted) -> Result<()> { self.unimplemented("mvn") }
     fn orn(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _operand: Shifted) -> Result<()> { self.unimplemented("orn") }
-    fn clz(&mut self, _flags: InstructionFlags, _dest: Register, _rc: Register) -> Result<()> { self.unimplemented("clz") }
+    fn clz(&mut self, _flags: InstructionFlags, _dest: Register, _src: Register) -> Result<()> { self.unimplemented("clz") }
     fn tst(&mut self, _flags: InstructionFlags, _reg: Register, _src: Shifted) -> Result<()> { self.unimplemented("tst") }
     fn teq(&mut self, _flags: InstructionFlags, _dest: Register, _src: Shifted) -> Result<()> { self.unimplemented("teq") }
 
@@ -310,8 +310,10 @@ pub trait ExecutionContext {
     fn pkh(&mut self, _flags: InstructionFlags, _dest: Register, _a: Register, _b: Shifted) -> Result<()> { self.unimplemented("pkh") }
     
     // Store/Load
-    fn str(&mut self, _flags: InstructionFlags, _src: Register, _dest: ImmOrReg<Word>, _off: Shifted) -> Result<()> { self.unimplemented("str") }
-    fn ldr(&mut self, _flags: InstructionFlags, _dest: Register, _src: ImmOrReg<Word>, _off: Shifted) -> Result<()> { self.unimplemented("ldr") }
+    fn str(&mut self, _flags: InstructionFlags, _src: Register,
+           _dest: ImmOrReg<Word>, _off: Shifted) -> Result<()> { self.unimplemented("str") }
+    fn ldr(&mut self, _flags: InstructionFlags, _dest: Option<Register>,
+           _src: ImmOrReg<Word>, _off: Shifted) -> Result<()> { self.unimplemented("ldr") }
     
     fn strex(&mut self, flags: InstructionFlags, res: Register, src: Register,
              dest: ImmOrReg<Word>, off: Shifted) -> Result<()> {
@@ -320,7 +322,7 @@ pub trait ExecutionContext {
     }
     fn ldrex(&mut self, flags: InstructionFlags,
              dest: Register, src: ImmOrReg<Word>, off: Shifted) -> Result<()> { 
-        self.ldr(flags, dest, src, off)
+        self.ldr(flags, Some(dest), src, off)
     }
 
     fn strd(&mut self, _flags: InstructionFlags,
@@ -416,7 +418,7 @@ impl error::Error for Error {
 impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &Error::NotEnoughInput(x) => write!(fmt, "not enough input (need at least {} more bytes)", x),
+            &Error::NotEnoughInput(x) => write!(fmt, "not enough input (need at least {} bytes)", x),
             _ => write!(fmt, "{}", error::Error::description(self)),
         }
     }
