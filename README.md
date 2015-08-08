@@ -25,5 +25,16 @@ disasm: start
 	arm-linux-androideabi-objdump -marm -Mforce-thumb -b binary -D start
 
 ```
+With an ldscript of:
+```ld.script
+SECTIONS
+{
+  . = 0;
+  .text : { *(.text) }
+  . = 0x400;
+  .data : { *(.data) }
+  .bss : { *(.bss) }
+}
+```
 
 You can then run this with `cargo run leg -- -p -g 0.0.0.0:8084 start`, which will pause at startup and listen for GDB connections on `0.0.0.0:8084`.
