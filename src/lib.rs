@@ -24,6 +24,13 @@ pub trait IntLiteral { fn from_literal(src: i32) -> Self; }
 impl IntLiteral for i32 { fn from_literal(src: i32) -> i32 { src } }
 impl IntLiteral for u32 { fn from_literal(src: i32) -> u32 { src as u32 } }
 
+/// Helper trait used to convert from Words to other size integers.
+pub trait IntTruncate { fn int_truncate(src: Word) -> Self; }
+impl IntTruncate for i64 { fn int_truncate(src: Word) -> i64 { src as i64 } }
+impl IntTruncate for i32 { fn int_truncate(src: Word) -> i32 { src as i32 } }
+impl IntTruncate for i16 { fn int_truncate(src: Word) -> i16 { src as i16 } }
+impl IntTruncate for i8 { fn int_truncate(src: Word) -> i8 { src as i8 } }
+
 /// Simple integer trait used for a number of helper functions.
 pub trait Int : Copy
     + ops::Sub<Self, Output=Self>
@@ -377,6 +384,7 @@ pub trait ExecutionContext {
     fn b(&mut self, _flags: InstructionFlags, _cond: Condition, _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("b") }
     fn cbz(&mut self, _flags: InstructionFlags, _src: Register, _base: Register, _off: ImmOrReg<Word>) -> Result<()> { self.unimplemented("cbz") }
     fn tb(&mut self, _flags: InstructionFlags, _table: Register, _index: Register) -> Result<()> { self.unimplemented("tb") }
+    fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) -> Result<()> { self.unimplemented("it") }
     fn eret(&mut self) -> Result<()> { self.unimplemented("eret") }
 
     // Bytes
@@ -421,7 +429,6 @@ pub trait ExecutionContext {
     
     fn cps(&mut self, _flags: InstructionFlags, _mode: i8) -> Result<()> { self.unimplemented("cps") }
     fn bkpt(&mut self, _val: i8) -> Result<()> { self.unimplemented("bkpt") }
-    fn it(&mut self, _cond: Condition, _ite: u8, _count: i8) -> Result<()> { self.unimplemented("it") }
     fn nop(&mut self) -> Result<()> { Ok(()) }
     fn yld(&mut self) -> Result<()> { Ok(()) }
     fn wfe(&mut self) -> Result<()> { Ok(()) }

@@ -2,7 +2,7 @@ extern crate leg;
 extern crate docopt;
 
 use std::io::Read;
-use leg::simple::Memory;
+use leg::simple::{System, Memory};
 use docopt::Docopt;
 
 static USAGE: &'static str = "
@@ -15,9 +15,9 @@ Options:
 
 fn main() {
     let mut gdbserver = leg::gdb::Server::new();
-    let mut emu = leg::simple::SimpleEmulator::new(leg::simple::MemoryTree::new());
+    let mut emu = leg::simple::SimpleEmulator::new(leg::simple::SimpleSystem::new());
 
-    emu.memory.add(0, 0x1000, Box::new(leg::simple::RAM::with_capacity(0x1000)));
+    emu.system.memory_mut().add(0, 0x1000, Box::new(leg::simple::RAM::with_capacity(0x1000)));
     
     let args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args()).parse())
@@ -46,7 +46,7 @@ fn main() {
             vec
         };
 
-        emu.memory.write(addr, &vec).ok();
+        emu.system.memory_mut().write(addr, &vec).ok();
     }
 
     loop {
