@@ -13,12 +13,16 @@ pub mod simple;
 pub mod disasm;
 pub mod gdb;
 
+pub trait IntLiteral { fn from_literal(src: i32) -> Self; }
+impl IntLiteral for i32 { fn from_literal(src: i32) -> i32 { src } }
+impl IntLiteral for u32 { fn from_literal(src: i32) -> u32 { src as u32 } }
+
 pub trait Int : Copy
     + ops::Sub<Self, Output=Self>
     + ops::BitAnd<Self, Output=Self>
     + ops::Shr<Self, Output=Self>
     + ops::Shl<Self, Output=Self>
-    + From<i32>
+    + IntLiteral
 {
 }
 
@@ -28,13 +32,13 @@ impl<T> Int for T where
     + ops::BitAnd<T, Output=T>
     + ops::Shr<T, Output=T>
     + ops::Shl<T, Output=T>
-    + From<i32>
+    + IntLiteral
 {}
 
 pub type Word = i32;
 
 bitflags! {
-    flags InstructionFlags: u16 {
+    flags InstructionFlags: u32 {
         const INST_NORMAL         = 0,
 
         const INST_SET_FLAGS      = 1 << 0,
@@ -57,6 +61,7 @@ bitflags! {
         const INST_WRITEBACK      = 1 << 13,
         const INST_DECREMENT      = 1 << 14,
         const INST_BEFORE         = 1 << 15,
+        const INST_PUSHPOP        = 1 << 16,
 
         // B
         const INST_LINK           = 1 << 12,
@@ -442,10 +447,19 @@ impl fmt::Debug for Error {
 /// ARM emulator error result (for convenience).
 pub type Result<T> = result::Result<T, Error>;
 
+#[inline]
 fn extend_signed(src: Word, bits: Word) -> Word {
     let src_bits = i32::from((mem::size_of::<Word>()*8) as i32);
     let shift_amt = src_bits - bits;
 
     // Left-pad with sign bit
     src.wrapping_shl(shift_amt as u32).wrapping_shr(shift_amt as u32)
+}
+
+/// Extract bits from a source integer.
+#[inline]
+fn bits<T>(src: T, start: T, count: T) -> T
+    where T: Int
+{
+    (src >> start) & ((T::from_literal(1) << count)-T::from_literal(1))
 }

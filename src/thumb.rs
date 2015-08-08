@@ -3,16 +3,8 @@
 use std::fmt;
 
 use super::*;
-use super::{register, condition, extend_signed};
+use super::{register, condition, extend_signed, bits};
 use super::disasm::Disassembler;
-
-/// Extract bits from a source integer.
-#[inline]
-fn bits<T>(src: T, start: T, count: T) -> T
-    where T: Int
-{
-    (src >> start) & ((T::from(1) << count)-T::from(1))
-}
 
 #[inline]
 fn decode_shift_type(op: Word) -> ShiftType {
@@ -65,7 +57,7 @@ pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a
     }
 
     // Check whether we've got a 32-bit instruction
-    let is_16bit = ! is_32bit(buffer);
+    let is_16bit = !is_32bit(buffer);
 
     // If so, check we have enough bytes
     if !is_16bit && (buffer.len() < 4) {
@@ -133,7 +125,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
-                                ImmOrReg::imm(((src >> 6) & 7) as i32))),
+                                ImmOrReg::register(bits(s32, 6, 3) as i8))),
 
         0b0001101_000000000...0b0001101_111111111 =>
             context.sub(INST_SET_FLAGS,
@@ -386,14 +378,14 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         register((src & 7) as i8),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
-                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
+                                ImmOrReg::imm(bits(s32, 6, 5) << 2))),
 
         0b01101_00000000000...0b01101_11111111111 =>
             context.ldr(INST_NORMAL,
                         Some(register((src & 7) as i8)),
                         ImmOrReg::register(((src >> 3) & 7) as i8),
                         Shifted(Shift::none(),
-                                ImmOrReg::imm(((src >> 6) & 0x1f) as i32))),
+                                ImmOrReg::imm(bits(s32, 6, 5) << 2))),
 
         0b01110_00000000000...0b01110_11111111111 =>
             context.str(INST_BYTE,
@@ -507,7 +499,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         ImmOrReg::imm((((src >> 2) & 0x3e) | 0x40) as i32)),
         
         0b1011010_000000000...0b1011010_111111111 =>
-            context.stm(INST_WRITEBACK | INST_DECREMENT | INST_BEFORE,
+            context.stm(INST_PUSHPOP | INST_WRITEBACK | INST_DECREMENT | INST_BEFORE,
                         Register::SP,
                         (0x4000 | (src & 0xff)) as u16),
 
@@ -560,11 +552,10 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
         
         0b1011110_000000000...0b1011110_111111111 => {
-            let regs = 0x4000
-                | (bits(s32, 8, 1) << 15)
+            let regs = (bits(s32, 8, 1) << 15)
                 | bits(s32, 0, 8);
             
-            context.ldm(INST_WRITEBACK, Register::SP, regs as u16)
+            context.ldm(INST_WRITEBACK | INST_PUSHPOP, Register::SP, regs as u16)
         },
 
         0b10111110_00000000...0b10111110_11111111 =>
@@ -612,7 +603,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         // LDM
         0b11001_00000000000...0b11001_11111111111 => {
             let reg_idx = (src >> 8) & 7;
-            context.ldm(if (src & (1 << reg_idx)) != 0 { INST_WRITEBACK } else { INST_NORMAL },
+            context.ldm(if (src & (1 << reg_idx)) == 0 { INST_WRITEBACK } else { INST_NORMAL },
                         register(reg_idx as i8),
                         (src & 0xff) as u16)
         },
@@ -705,11 +696,11 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         0b1110100010_000000_0000000000000000...0b1110100010_111111_1111111111111111 |
         0b1110100100_000000_0000000000000000...0b1110100100_111111_1111111111111111 => {
             let load = ((src >> 20) & 1) != 0;
-            let reg = register(bits(s32, 16, 4) as i8);
+            let rn = register(bits(s32, 16, 4) as i8);
             let regs = (src & 0xffff) as u16;
             
             let flags = if ((src >> 21) & 1) == 1 {
-                INST_WRITEBACK
+                INST_WRITEBACK | (if rn == Register::SP { INST_PUSHPOP } else { INST_NORMAL })
             } else {
                 INST_NORMAL
             };
@@ -721,9 +712,9 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
             };
             
             if load {
-                context.ldm(flags, reg, regs)
+                context.ldm(flags, rn, regs)
             } else {
-                context.stm(flags, reg, regs)
+                context.stm(flags, rn, regs)
             }
         },
 

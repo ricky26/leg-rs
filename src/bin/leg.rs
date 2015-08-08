@@ -1,7 +1,18 @@
 extern crate leg;
+extern crate docopt;
+
 use std::io::Read;
+use docopt::Docopt;
 
 struct Memory([u8;4096]);
+
+static USAGE: &'static str = "
+Usage: leg [options] <executable>
+
+Options:
+    -p                            Pause at startup.
+    -g <addr>, --gdb=<addr>       Listen for GDB connections on GDBADDR (for example 0.0.0.0:8084)
+";
 
 fn copy_memory(src: &[u8], dest: &mut [u8]) {
     for x in 0.. {
@@ -43,29 +54,42 @@ impl leg::simple::Memory for Memory {
 }
 
 fn main() {
-    let args: Vec<_> = std::env::args().collect();
     let mut gdbserver = leg::gdb::Server::new();
-    gdbserver.start_listening("0.0.0.0:8084");
     let mut emu = leg::simple::SimpleEmulator::<Memory>::new(Memory([0u8;4096]));
+    
+    let args = Docopt::new(USAGE)
+        .and_then(|d| d.argv(std::env::args()).parse())
+        .unwrap_or_else(|e| e.exit());
 
-    emu.set_apsr(1 << 5);
     emu.set_register(leg::Register::SP, 4096);
-    //emu.set_paused(true);
+    emu.set_paused(args.get_bool("-p"));
 
-    let vec = {
-        let mut f = std::fs::File::open(&args[1]).unwrap();
-        let mut vec = Vec::new();
-        f.read_to_end(&mut vec).ok();
-        vec
-    };
+    let listen = args.get_str("-g");
+    if listen != "" {
+        gdbserver.start_listening(listen);
+    }
 
-    copy_memory(&vec, &mut emu.memory.0);
+    for arg in args.get_vec("<executable>") {
+        let vec = {
+            let mut f = std::fs::File::open(arg).unwrap();
+            let mut vec = Vec::new();
+            f.read_to_end(&mut vec).ok();
+            vec
+        };
+
+        copy_memory(&vec, &mut emu.memory.0);
+    }
 
     loop {
         match emu.execute_one() {
             Err(x) => {
                 println!("ERROR {:?}", x);
-                break;
+                if emu.debugging() {
+                    emu.set_paused(true);
+                    emu.send_gdb_command(&leg::gdb::Command::new("S05"));
+                } else {
+                    break
+                }
             },
             _ => {},
         }

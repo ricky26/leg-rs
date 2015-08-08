@@ -1,7 +1,7 @@
 use std::fmt;
 
 use super::*;
-use super::register;
+use super::{register, bits};
 use std::fmt::Write;
 
 pub trait IntTruncate {
@@ -31,6 +31,23 @@ fn swap_word(src: Word) -> Word {
         | ((src << 8) & 0xff0000)
         | ((src << 24) & 0xff000000);
     src as Word
+}
+
+fn adc(a: Word, b: Word, c: Word) -> (Word, bool, bool) {
+    let sa = a as i64;
+    let sb = b as i64;
+    let sc = c as i64;
+    let ua = (a as u32) as u64;
+    let ub = (b as u32) as u64;
+    let uc = (c as u32) as u64;
+    
+    let us = ua.wrapping_add(ub).wrapping_add(uc);
+    let ss = sa.wrapping_add(sb).wrapping_add(sc);
+    let result = us as u32;
+
+    (result as i32,
+     (result as u64) != us,
+     ((result as i32) as i64) != ss)
 }
 
 pub trait Memory {
@@ -75,17 +92,70 @@ pub trait Memory {
     }
 }
 
+#[derive(Copy,Clone)]
+pub struct CPSR(pub u32);
+
+impl CPSR {
+    pub fn new() -> CPSR { CPSR(0) }
+    
+    /// Create a modified CPSR value with the given mask bits
+    /// set to those in the value field.
+    pub fn with_bits(&self, mask: u32, value: u32) -> CPSR { CPSR((self.0 &! mask) | (value & mask)) }
+    
+    /// value bit.
+    pub fn negative(&self) -> bool { bits(self.0, 31, 1) != 0 }
+    /// Create a new CPSR with value bit value.
+    pub fn with_negative(&self, value: bool) -> CPSR { self.with_bits(1 << 31, (value as u32) << 31) }
+
+    /// Z bit.
+    pub fn zero(&self) -> bool { bits(self.0, 30, 1) != 0 }
+    /// Create a new CPSR with Z bit value.
+    pub fn with_zero(&self, value: bool) -> CPSR { self.with_bits(1 << 30, (value as u32) << 30) }
+
+    /// C bit.
+    pub fn carry(&self) -> bool { bits(self.0, 29, 1) != 0 }
+    /// Create a new CPSR with C bit value.
+    pub fn with_carry(&self, value: bool) -> CPSR { self.with_bits(1 << 29, (value as u32) << 29) }
+
+    /// V bit.
+    pub fn overflow(&self) -> bool { bits(self.0, 28, 1) != 0 }
+    /// Create a new CPSR with V bit value.
+    pub fn with_overflow(&self, value: bool) -> CPSR { self.with_bits(1 << 28, (value as u32) << 28) }
+
+    /// Q bit.
+    pub fn saturated(&self) -> bool { bits(self.0, 27, 1) != 0 }
+    /// Create a new CPSR with V bit value.
+    pub fn with_saturated(&self, value: bool) -> CPSR { self.with_bits(1 << 27, (value as u32) << 27) }
+
+    /// THUMB-mode bit.
+    pub fn thumb(&self) -> bool { bits(self.0, 5, 1) != 0 }
+    /// New CPSR with THUMB mode bit.
+    pub fn with_thumb(&self, value: bool) -> CPSR { self.with_bits(1 << 5, (value as u32) << 5) }
+}
+
+impl fmt::Debug for CPSR {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "CPSR {{{}{}{}{}{}}}",
+               if self.negative()  { "N" } else { "-" },
+               if self.zero()      { "Z" } else { "-" },
+               if self.carry()     { "V" } else { "-" },
+               if self.overflow()  { "C" } else { "-" },
+               if self.saturated() { "Q" } else { "-" })
+    }
+}
+
 pub struct SimpleEmulator<M: Memory> {
     pub memory: M,
     
     registers: [Word;16],
-    apsr: u32,
+    cpsr: CPSR,
     itt_mask: u8,
     itt_count: i8,
     itt_cond: Condition,
     paused: bool,
     next_pc: Word,
     inst_size: Word,
+    debugging: bool,
     
     pending_gdb_commands: Vec<gdb::Command<'static>>,
 }
@@ -94,7 +164,7 @@ impl<M: Memory> SimpleEmulator<M> {
     pub fn new(memory: M) -> SimpleEmulator<M> {
         SimpleEmulator {
             registers: [0i32;16],
-            apsr: 0u32,
+            cpsr: CPSR::new().with_thumb(true),
             memory: memory,
             itt_mask: 0u8,
             itt_count: 0,
@@ -102,10 +172,14 @@ impl<M: Memory> SimpleEmulator<M> {
             paused: false,
             next_pc: 0i32,
             inst_size: 0i32,
+            debugging: false,
 
             pending_gdb_commands: Vec::new(),
         }
     }
+
+    pub fn debugging(&self) -> bool { self.debugging }
+    pub fn start_debugging(&mut self) { self.debugging = true; }
 
     pub fn register(&self, reg: Register) -> Word {
         self.registers[reg.index() as usize]
@@ -144,109 +218,77 @@ impl<M: Memory> SimpleEmulator<M> {
         }
     }
 
-    pub fn shift(&self, flags: InstructionFlags, src: Word, shift: Shift) -> Word {
+    pub fn shift(&self, flags: InstructionFlags, src: Word, shift: Shift) -> (Word, bool) {
+        let topbit = 0x80000000u32 as i32;
+        
         match (shift.0, self.imm_or_reg(flags, shift.1)) {
-            (ShiftType::None, _) => src,
-            (ShiftType::LSL, x) => src << x,
-            (ShiftType::LSR, x) => ((src as u32) << (x as u32)) as Word,
-            (ShiftType::ASR, x) => src >> x,
+            (ShiftType::None, _) => (src, false),
+            (ShiftType::LSL, x) => (src << x, ((src << (x-1)) & topbit) != 0),
+            (ShiftType::LSR, x) => {
+                let result = ((src as u32) >> (x as u32)) as Word;
+                let extra = ((src as u32) >> ((x-1) as u32)) as Word;
+                (result, (extra & 1) != 0)
+            },
+            (ShiftType::ASR, x) => {
+                let result = src >> x;
+                let extra = src >> (x-1);
+                (result, (extra & 1) != 0)
+            },
             (ShiftType::ROR, x) => {
                 let src = src as u32;
                 let shift = x as u32;
-                ((src >> shift) | (src << (32-shift))) as Word
+                let result = ((src >> shift) | (src << (32-shift))) as Word;
+                (result, (result & topbit) != 0)
             },
             _ => panic!("TODO: unimplemented shift type"),
         }
     }
 
-    pub fn shifted(&self, flags: InstructionFlags, src: Shifted) -> Word {
+    pub fn shifted(&self, flags: InstructionFlags, src: Shifted) -> (Word, bool) {
         self.shift(flags, self.imm_or_reg(flags, src.1), src.0)
     }
-    
-    pub fn negative(&self) -> bool {
-        ((self.apsr >> 31) & 1) != 0
+
+    pub fn should_set_flags(&self, flags: InstructionFlags) -> bool {
+        flags.get(INST_SET_FLAGS) && (self.itt_count == 0)
     }
 
-    pub fn zero(&self) -> bool {
-        ((self.apsr >> 30) & 1) != 0
-    }
-
-    pub fn carry(&self) -> bool {
-        ((self.apsr >> 29) & 1) != 0
+    pub fn cpsr(&self) -> CPSR { self.cpsr.clone() }
+    pub fn set_cpsr(&mut self, cpsr: CPSR) {
+        self.cpsr = cpsr;
     }
     
-    pub fn overflow(&self) -> bool {
-        ((self.apsr >> 28) & 1) != 0
-    }
-    
-    pub fn saturated(&self) -> bool {
-        ((self.apsr >> 27) & 1) != 0
+    pub fn set_cpsr_from_value(&mut self, result: Word) {
+        let cpsr = self.cpsr.with_negative((result & (1 << 31)) != 0)
+            .with_zero(result == 0);
+        self.set_cpsr(cpsr);
     }
 
-    pub fn set_apsr(&mut self, apsr: u32) {
-        self.apsr = apsr
+    pub fn set_cpsr_from_add(&mut self, result: Word, carry: bool, overflow: bool) {
+        let cpsr = self.cpsr.with_negative((result & (1 << 31)) != 0)
+            .with_zero(result == 0)
+            .with_carry(carry)
+            .with_overflow(overflow);
+        self.set_cpsr(cpsr)
     }
 
     pub fn cond(&self, cond: Condition) -> bool {
         match cond {
-            Condition::EQ => self.zero(),
-            Condition::NE => !self.zero(),
-            Condition::CS => self.carry(),
-            Condition::CC => !self.carry(),
-            Condition::MI => self.negative(),
-            Condition::PL => !self.negative(),
-            Condition::VS => self.overflow(),
-            Condition::VC => !self.overflow(),
-            Condition::HI => self.carry() && !self.zero(),
-            Condition::LS => !self.carry() && self.zero(),
-            Condition::GE => self.negative() == self.overflow(),
-            Condition::LT => self.negative() != self.overflow(),
-            Condition::GT => !self.zero() && (self.negative() == self.overflow()),
-            Condition::LE => self.zero() || (self.negative() != self.overflow()),
+            Condition::EQ => self.cpsr.zero(),
+            Condition::NE => !self.cpsr.zero(),
+            Condition::CS => self.cpsr.carry(),
+            Condition::CC => !self.cpsr.carry(),
+            Condition::MI => self.cpsr.negative(),
+            Condition::PL => !self.cpsr.negative(),
+            Condition::VS => self.cpsr.overflow(),
+            Condition::VC => !self.cpsr.overflow(),
+            Condition::HI => self.cpsr.carry() && !self.cpsr.zero(),
+            Condition::LS => !self.cpsr.carry() && self.cpsr.zero(),
+            Condition::GE => self.cpsr.negative() == self.cpsr.overflow(),
+            Condition::LT => self.cpsr.negative() != self.cpsr.overflow(),
+            Condition::GT => !self.cpsr.zero() && (self.cpsr.negative() == self.cpsr.overflow()),
+            Condition::LE => self.cpsr.zero() || (self.cpsr.negative() != self.cpsr.overflow()),
             Condition::AL => true,
         }
-    }
-
-    pub fn cmp(&mut self, a: Word, b: Word, c: Word) {
-        let ua = a as u32;
-        let ub = b as u32;
-        let uc = c as u32;
-        
-        let mut apsr = ua.wrapping_sub(ub).wrapping_sub(uc) & 0x80000000;
-        
-        if ua == ub {
-            apsr |= 1u32 << 30
-        }
-        if ua > ub {
-            apsr |= 1u32 << 29
-        }
-        if ((a < 0) && (b > (2147483647i32.wrapping_sub(a).wrapping_add(1))))
-            || ((a > 0) && (-b > (a.wrapping_sub(2147483647)))) {
-                apsr |= 1u32 << 28
-            }
-
-        self.set_apsr(apsr)
-    }
-
-    pub fn cmn(&mut self, a: Word, b: Word, c: Word) {
-        let ua = a as u32;
-        let ub = b as u32;
-        let uc = c as u32;
-        
-        let mut apsr = ua.wrapping_add(ub).wrapping_add(uc) & 0x80000000;
-        
-        if (ua + ub) == 0 {
-            apsr |= 1u32 << 30
-        }
-        if (4294967295u32 - ua) > ub {
-            apsr |= 1u32 << 29
-        }
-        if ((a < 0) && (b < -(2147483647i32.wrapping_sub(a).wrapping_add(1))))
-            || ((a > 0) && (b > (a.wrapping_sub(2147483647)))) {
-                apsr |= 1u32 << 28
-            }
-
-        self.set_apsr(apsr)
     }
 
     pub fn branch(&mut self, flags: InstructionFlags, addr: i32) -> Result<()> {
@@ -318,10 +360,13 @@ impl<M: Memory> SimpleEmulator<M> {
             }
         }
 
-        let (_, err) = super::thumb::execute(self, if is_32bit { &mut buf } else { &mut buf[..2] });
+        match super::thumb::execute(self, if is_32bit { &mut buf } else { &mut buf[..2] }) {
+            (_, Err(x)) => { return Err(x) },
+            _ => {},
+        }
         pc = self.next_pc;
         self.set_register(Register::PC, pc);
-        err
+        Ok(())
     }
 
     pub fn execute(&mut self) -> Result<()> {
@@ -378,6 +423,8 @@ impl<M: Memory> SimpleEmulator<M> {
     }
 
     pub fn process_gdb_command(&mut self, cmd: &gdb::Command) {
+        self.debugging = true;
+        
         if cmd.contents() == "?" {
             if self.paused {
                 self.send_gdb_command(&gdb::Command::new("S05"));
@@ -396,7 +443,7 @@ impl<M: Memory> SimpleEmulator<M> {
             }
 
             write!(&mut out, "{:08x}", 0x12345678u32).unwrap();
-            write!(&mut out, "{:08x}", swap_word(self.apsr as i32)).unwrap();
+            write!(&mut out, "{:08x}", swap_word(self.cpsr.0 as i32)).unwrap();
 
             self.send_gdb_command(&gdb::Command::new_owned(out));
         } else if cmd.contents() == "c" {
@@ -404,7 +451,10 @@ impl<M: Memory> SimpleEmulator<M> {
         } else if cmd.contents() == "s" {
             let paws = self.paused;
             self.paused = false;
-            self.execute_one().ok();
+            match self.execute_one() {
+                Err(x) => println!("ERROR: {:?}", x),
+                _ => {},
+            }
             self.paused = paws;
             self.send_gdb_command(&gdb::Command::new("S05"));
         } else if let Some(caps) = regex!("p([0-9a-fA-F]+)").captures(cmd.contents()) {
@@ -414,7 +464,7 @@ impl<M: Memory> SimpleEmulator<M> {
             match reg {
                 0...15 => write!(&mut out, "{:08x}", swap_word(self.registers[reg])).unwrap(),
                 16...23 => write!(&mut out, "{:016x}", 0x12345678abcdefu64).unwrap(),
-                25 => write!(&mut out, "{:08x}", swap_word(self.apsr as i32)).unwrap(),
+                25 => write!(&mut out, "{:08x}", swap_word(self.cpsr.0 as i32)).unwrap(),
                 _ => write!(&mut out, "{:08x}", 0i32).unwrap(),
             };
             
@@ -460,19 +510,27 @@ impl<M: Memory> SimpleEmulator<M> {
 
 impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     fn undefined(&mut self, msg: &str) -> Result<()> {
-        println!("PC => {:b}", self.current_instruction().unwrap());
-        panic!("undefined {} @ {}", msg, self.register(Register::PC))
+        if !self.debugging {
+            println!("PC => {:b}", self.current_instruction().unwrap());
+            panic!("undefined {} @ {}", msg, self.register(Register::PC));
+        } else {
+            Err(Error::Undefined("bkpt".into()))
+        }
     }
     fn unpredictable(&mut self) -> Result<()> {
-        println!("PC => {:b}", self.current_instruction().unwrap());
-        panic!("unpredictable @ {}", self.register(Register::PC))
+        if !self.debugging {
+            println!("PC => {:b}", self.current_instruction().unwrap());
+            panic!("unpredictable @ {}", self.register(Register::PC))
+        } else {
+            self.undefined("")
+        }
     }
     
     // Move
     fn mov(&mut self, flags: InstructionFlags, dest: Register, src: Shifted) -> Result<()> {
-        let val = self.shifted(flags, src);
-        if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
-            self.cmn(val, 0, 0)
+        let (val, _c) = self.shifted(flags, src);
+        if self.should_set_flags(flags) {
+            self.set_cpsr_from_value(val);
         }
         self.cpu_set_register(flags, dest, val);
         Ok(())
@@ -481,91 +539,133 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     // Add/subtract
     fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
         let a = self.imm_or_reg(flags, src);
-        let b = self.shifted(flags, add);
-        let val = a + b;
+        let (b, _c) = self.shifted(flags, add);
+        let (result, carry, overflow) = adc(a, b, 0);
         
-        if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
-            self.cmn(a, b, 0)
+        if self.should_set_flags(flags) {
+            self.set_cpsr_from_add(result, carry, overflow);
         }
-        self.cpu_set_register(flags, dest, val);
+        self.cpu_set_register(flags, dest, result);
         Ok(())
     }
     fn sub(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
         let a = self.imm_or_reg(flags, src);
-        let b = self.shifted(flags, sub);
-        let val = a - b;
+        let (b, _c) = self.shifted(flags, sub);
+        let (result, carry, overflow) = adc(a, !b, 1);
 
-        if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
-            self.cmp(a, b, 0)
+        if self.should_set_flags(flags) {
+            self.set_cpsr_from_add(result, carry, overflow);
         }
-        self.cpu_set_register(flags, dest, val);
+        self.cpu_set_register(flags, dest, result);
         Ok(())
     }
     fn rsb(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
         let a = self.imm_or_reg(flags, src);
-        let b = self.shifted(flags, sub);
-        let val = b - a;
-        if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
-            self.cmp(b, a, 0)
+        let (b, _c) = self.shifted(flags, sub);
+        let (result, carry, overflow) = adc(!a, b, 1);
+        
+        if self.should_set_flags(flags) {
+            self.set_cpsr_from_add(result, carry, overflow);
         }
-        self.cpu_set_register(flags, dest, val);
+        self.cpu_set_register(flags, dest, result);
         Ok(())
     }
     fn adc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
         let a = self.imm_or_reg(flags, src);
-        let b = self.shifted(flags, add);
-        let c = self.carry() as Word;
-        let val = a + b + c;
-        if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
-            self.cmn(a, b, c)
+        let (b, _c) = self.shifted(flags, add);
+        let (result, carry, overflow) = adc(a, b, self.cpsr.carry() as Word);
+
+        if self.should_set_flags(flags) {
+            self.set_cpsr_from_add(result, carry, overflow);
         }
-        self.cpu_set_register(flags, dest, val);
+        self.cpu_set_register(flags, dest, result);
         Ok(())
     }
     fn sbc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
         let a = self.imm_or_reg(flags, src);
-        let b = self.shifted(flags, sub);
-        let c = self.carry() as Word;
-        let val = a - b - c;
-        if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
-            self.cmp(a, b, c)
+        let (b, _c) = self.shifted(flags, sub);
+        let (result, carry, overflow) = adc(a, !b, self.cpsr.carry() as Word);
+        
+        if self.should_set_flags(flags) {
+            self.set_cpsr_from_add(result, carry, overflow);
         }
-        self.cpu_set_register(flags, dest, val);
+        self.cpu_set_register(flags, dest, result);
         Ok(())
     }
     fn cmp(&mut self, flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
         let a = self.cpu_register(flags, a);
-        let b = self.shifted(flags, b);
-        self.cmp(a, b, 0);
+        let (b, _c) = self.shifted(flags, b);
+        let (result, carry, overflow) = adc(a, !b, 1);
+        self.set_cpsr_from_add(result, carry, overflow);
         Ok(())
     }
     fn cmn(&mut self, flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
         let a = self.cpu_register(flags, a);
-        let b = self.shifted(flags, b);
-        self.cmn(a, b, 0);
+        let (b, _c) = self.shifted(flags, b);
+        let (result, carry, overflow) = adc(a, b, 0);
+        self.set_cpsr_from_add(result, carry, overflow);
         Ok(())
     }
-
+    
     // Bitwise
     fn and(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
-        let val = self.imm_or_reg(flags, src) & self.shifted(flags, operand);
+        let (operand, carry) = self.shifted(flags, operand);
+        let val = self.imm_or_reg(flags, src) & operand;
         self.cpu_set_register(flags, dest, val);
+        if self.should_set_flags(flags) {
+            let cpsr = self.cpsr
+                .with_negative((val & (1 << 31)) != 0)
+                .with_zero(val == 0)
+                .with_carry(carry);
+            self.set_cpsr(cpsr);
+        }
         Ok(())
     }
     fn orr(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
-        let val = self.imm_or_reg(flags, src) | self.shifted(flags, operand);
+        let (operand, carry) = self.shifted(flags, operand);
+        let val = self.imm_or_reg(flags, src) | operand;
         self.cpu_set_register(flags, dest, val);
+        if self.should_set_flags(flags) {
+            let cpsr = self.cpsr
+                .with_negative((val & (1 << 31)) != 0)
+                .with_zero(val == 0)
+                .with_carry(carry);
+            self.set_cpsr(cpsr);
+        }
         Ok(())
     }
     fn eor(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
-        let val = self.imm_or_reg(flags, src) ^ self.shifted(flags, operand);
+        let (operand, carry) = self.shifted(flags, operand);
+        let val = self.imm_or_reg(flags, src) ^ operand;
         self.cpu_set_register(flags, dest, val);
+        if self.should_set_flags(flags) {
+            let cpsr = self.cpsr
+                .with_negative((val & (1 << 31)) != 0)
+                .with_zero(val == 0)
+                .with_carry(carry);
+            self.set_cpsr(cpsr);
+        }
+        Ok(())
+    }
+
+    fn mvn(&mut self, flags: InstructionFlags, dest: Register, operand: Shifted) -> Result<()> {
+        let (operand, carry) = self.shifted(flags, operand);
+        let val = !operand;
+        self.cpu_set_register(flags, dest, val);
+        if self.should_set_flags(flags) {
+            let cpsr = self.cpsr
+                .with_negative((val & (1 << 31)) != 0)
+                .with_zero(val == 0)
+                .with_carry(carry);
+            self.set_cpsr(cpsr);
+        }
         Ok(())
     }
     
     fn str(&mut self, flags: InstructionFlags, src: Register, dest: ImmOrReg<Word>, off: Shifted) -> Result<()> {
         let base = self.imm_or_reg(flags, dest);
-        let addr = base + self.shifted(flags, off);
+        let (operand, _c) = self.shifted(flags, off);
+        let addr = base + operand;
         let value = self.cpu_register(flags, src);
         
         if flags.get(INST_BYTE) {
@@ -579,7 +679,8 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     
     fn ldr(&mut self, flags: InstructionFlags, dest: Option<Register>, src: ImmOrReg<Word>, off: Shifted) -> Result<()> {        
         let base = self.imm_or_reg(flags, src);
-        let addr = base + self.shifted(flags, off);
+        let (operand, _c) = self.shifted(flags, off);
+        let addr = base + operand;
         let value;
         
         if flags.get(INST_BYTE) {
@@ -604,7 +705,7 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         let before = flags.get(INST_BEFORE);
         
         for i in 0..16 {
-            let i = 15-i;
+            let i = if dec { 15-i } else { i };
             if (registers & (1 << i)) == 0 { continue }
             let reg = register(i);
             
@@ -645,6 +746,7 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         let before = flags.get(INST_BEFORE);
 
         for i in 0..16 {
+            let i = if dec { 15-i } else { i };
             if (registers & (1 << i)) == 0 { continue }
             let reg = register(i);
             if reg == dest { continue }
@@ -698,11 +800,5 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         } else {
             Ok(())
         }
-    }
-
-    fn bkpt(&mut self, _code: i8) -> Result<()> {
-        self.paused = true;
-        self.send_gdb_command(&gdb::Command::new("S05"));
-        Ok(())
     }
 }

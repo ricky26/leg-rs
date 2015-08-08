@@ -197,13 +197,13 @@ impl Server {
         }
     }
 
-    pub fn start_listening<T: net::ToSocketAddrs + Send + 'static>(&mut self, bind_to: T) {
+    pub fn start_listening<T: net::ToSocketAddrs + Send + Clone>(&mut self, bind_to: T) {
         let (send, recv) = mpsc::channel();
         self.receiver = Some(recv);
+
+        let listener = net::TcpListener::bind(bind_to).unwrap();
         
         thread::spawn(move || {
-            let listener = net::TcpListener::bind(bind_to).unwrap();
-            
             for stream in listener.incoming() {
                 let mut stream = stream.unwrap();
                 send.send(ServerCommand::ClientReady(stream.try_clone().unwrap())).unwrap();
@@ -220,7 +220,7 @@ impl Server {
                         match ret {
                             Ok((new_slice, cmd)) => {
                                 send.send(ServerCommand::Packet(cmd.to_owned())).unwrap();
-                                done += vec.len() - new_slice.len();
+                                done = vec.len() - new_slice.len();
                             },
                             _=> break,
                         }
