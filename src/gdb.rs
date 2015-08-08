@@ -197,7 +197,7 @@ impl Server {
         }
     }
 
-    pub fn start_listening<T: net::ToSocketAddrs + Send + Clone>(&mut self, bind_to: T) {
+    pub fn start_listening<T: net::ToSocketAddrs>(&mut self, bind_to: T) {
         let (send, recv) = mpsc::channel();
         self.receiver = Some(recv);
 
