@@ -2,60 +2,22 @@ extern crate leg;
 extern crate docopt;
 
 use std::io::Read;
+use leg::simple::Memory;
 use docopt::Docopt;
 
-struct Memory([u8;4096]);
-
 static USAGE: &'static str = "
-Usage: leg [options] <executable>
+Usage: leg [options] <executable>...
 
 Options:
     -p                            Pause at startup.
     -g <addr>, --gdb=<addr>       Listen for GDB connections on GDBADDR (for example 0.0.0.0:8084)
 ";
 
-fn copy_memory(src: &[u8], dest: &mut [u8]) {
-    for x in 0.. {
-        if (x >= src.len()) || (x >= dest.len()) {
-            break
-        }
-
-        dest[x] = src[x]
-    }
-}
-
-impl leg::simple::Memory for Memory {
-    fn read(&self, addr: u64, dest: &mut [u8]) -> leg::Result<()> {
-        let addr = addr as usize;
-        let mem_size = std::mem::size_of_val(&self.0);
-        
-        if addr >= mem_size {
-            return Err(leg::Error::Unknown(format!("tried to read invalid address 0x{:x}", addr)));
-        }
-        
-        let start = std::cmp::min(mem_size, addr);
-        let end = std::cmp::min(mem_size, addr + dest.len());
-        copy_memory(&self.0[start..end], dest);
-        Ok(())
-    }
-    fn write(&mut self, addr: u64, src: &[u8]) -> leg::Result<()> {
-        let addr = addr as usize;
-        let mem_size = std::mem::size_of_val(&self.0);
-        
-        if addr >= mem_size {
-            return Err(leg::Error::Unknown(format!("tried to read invalid address 0x{:x}", addr)));
-        }
-        
-        let start = std::cmp::min(mem_size, addr);
-        let end = std::cmp::min(mem_size, addr + src.len());
-        copy_memory(src, &mut self.0[start..end]);
-        Ok(())
-    }
-}
-
 fn main() {
     let mut gdbserver = leg::gdb::Server::new();
-    let mut emu = leg::simple::SimpleEmulator::<Memory>::new(Memory([0u8;4096]));
+    let mut emu = leg::simple::SimpleEmulator::new(leg::simple::MemoryTree::new());
+
+    emu.memory.add(0, 0x1000, Box::new(leg::simple::RAM::with_capacity(0x1000)));
     
     let args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args()).parse())
@@ -70,14 +32,21 @@ fn main() {
     }
 
     for arg in args.get_vec("<executable>") {
+        let (path, addr) = if let Some(_) = arg.find('@') {
+            let parts: Vec<_> = arg.splitn(2, '@').collect();
+            (parts[0], u64::from_str_radix(&parts[1], 10).unwrap())
+        } else {
+            (arg, 0u64)
+        };
+        
         let vec = {
-            let mut f = std::fs::File::open(arg).unwrap();
+            let mut f = std::fs::File::open(path).unwrap();
             let mut vec = Vec::new();
             f.read_to_end(&mut vec).ok();
             vec
         };
 
-        copy_memory(&vec, &mut emu.memory.0);
+        emu.memory.write(addr, &vec).ok();
     }
 
     loop {
@@ -88,6 +57,7 @@ fn main() {
                     emu.set_paused(true);
                     emu.send_gdb_command(&leg::gdb::Command::new("S05"));
                 } else {
+                    emu.print_state().ok();
                     break
                 }
             },

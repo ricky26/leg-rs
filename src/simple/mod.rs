@@ -9,6 +9,12 @@ use super::*;
 use super::{register, bits};
 use std::fmt::Write;
 
+pub use self::memory_tree::MemoryTree;
+pub use self::ram::RAM;
+
+pub mod memory_tree;
+pub mod ram;
+
 pub trait IntTruncate {
     fn int_truncate(src: Word) -> Self;
 }
@@ -27,6 +33,17 @@ impl IntTruncate for i16 {
 
 impl IntTruncate for i8 {
     fn int_truncate(src: Word) -> i8 { src as i8 }
+}
+
+/// Copy as much memory as possible from `src` to `dest`.
+pub fn copy_memory(src: &[u8], dest: &mut [u8]) {
+    for x in 0.. {
+        if (x >= src.len()) || (x >= dest.len()) {
+            break
+        }
+
+        dest[x] = src[x]
+    }
 }
 
 fn swap_word(src: Word) -> Word {
@@ -56,22 +73,22 @@ fn adc(a: Word, b: Word, c: Word) -> (Word, bool, bool) {
 }
 
 pub trait Memory {
-    fn read(&self, addr: u64, dest: &mut [u8]) -> Result<()>;
+    fn read(&mut self, addr: u64, dest: &mut [u8]) -> Result<()>;
     fn write(&mut self, addr: u64, src: &[u8]) -> Result<()>;
 
-    fn read_u8(&self, addr: u64) -> Result<u8> {
+    fn read_u8(&mut self, addr: u64) -> Result<u8> {
         let mut data = [0u8];
         try!(self.read(addr, &mut data));
         Ok(data[0])
     }
 
-    fn read_u16(&self, addr: u64) -> Result<u16> {
+    fn read_u16(&mut self, addr: u64) -> Result<u16> {
         let mut data = [0u8;2];
         try!(self.read(addr, &mut data));
         Ok((data[0] as u16) | ((data[1] as u16) << 8))
     }
 
-    fn read_u32(&self, addr: u64) -> Result<u32> {
+    fn read_u32(&mut self, addr: u64) -> Result<u32> {
         let mut data = [0u8;4];
         try!(self.read(addr, &mut data));
         Ok((data[0] as u32)
@@ -142,7 +159,8 @@ impl CPSR {
 
 impl fmt::Debug for CPSR {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "CPSR {{{}{}{}{}{}}}",
+        write!(fmt, "0x{:08x} {{{}{}{}{}{}}}",
+               self.0,
                if self.negative()  { "N" } else { "-" },
                if self.zero()      { "Z" } else { "-" },
                if self.carry()     { "V" } else { "-" },
@@ -317,24 +335,6 @@ impl<M: Memory> SimpleEmulator<M> {
         Ok(())
     }
 
-    pub fn current_instruction(&self) -> Result<Word> {
-        let mut buf = [0u8; 4];
-        let pc = self.register(Register::PC);
-
-        // TODO: ARM vs THUMB mode
-
-        try!(self.memory.read(pc as u64, &mut buf[..2]));
-
-        if thumb::is_32bit(&buf) {
-            try!(self.memory.read((pc + 2) as u64, &mut buf[2..4]));
-        }
-
-        Ok((((buf[0] as Word) << 24)
-            | ((buf[1] as Word) << 16)
-            | ((buf[2] as Word) << 8)
-            | (buf[3] as Word)))
-    }
-    
     pub fn execute_one(&mut self) -> Result<()> {
         if self.paused { return Ok(()) }
         
@@ -383,7 +383,9 @@ impl<M: Memory> SimpleEmulator<M> {
     }
 
     pub fn dump_state(&self, fmt: &mut fmt::Write) -> fmt::Result {
-        try!(writeln!(fmt, "registers:"));
+        try!(writeln!(fmt, "processor state:"));
+        try!(writeln!(fmt, "\tcpsr: {:?}", self.cpsr));
+        try!(writeln!(fmt, "\tregisters:"));
         for reg in &[Register::R0,
                      Register::R1,
                      Register::R2,
@@ -401,7 +403,7 @@ impl<M: Memory> SimpleEmulator<M> {
                      Register::LR,
                      Register::PC] {
 
-            try!(writeln!(fmt, "\t{} = 0x{:x}", reg, self.register(*reg)));
+            try!(writeln!(fmt, "\t\t{}\t= 0x{:08x}", reg, self.register(*reg)));
         }
 
         Ok(())
@@ -518,16 +520,14 @@ impl<M: Memory> SimpleEmulator<M> {
 impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     fn undefined(&mut self, msg: &str) -> Result<()> {
         if !self.debugging {
-            println!("PC => {:b}", self.current_instruction().unwrap());
-            panic!("undefined {} @ {}", msg, self.register(Register::PC));
+            Err(Error::Unknown(format!("undefined {} @ {}", msg, self.register(Register::PC))))
         } else {
             Err(Error::Undefined("bkpt".into()))
         }
     }
     fn unpredictable(&mut self) -> Result<()> {
         if !self.debugging {
-            println!("PC => {:b}", self.current_instruction().unwrap());
-            panic!("unpredictable @ {}", self.register(Register::PC))
+            Err(Error::Unknown(format!("unpredictable @ {}", self.register(Register::PC))))
         } else {
             self.undefined("")
         }
