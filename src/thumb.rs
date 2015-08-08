@@ -1,4 +1,4 @@
-// Parser for the THUMB-2 instruction set
+//! Parser for the THUMB-2 instruction set
 
 use std::fmt;
 
@@ -45,6 +45,8 @@ fn decode_reg_shift(op: Word, reg: Register) -> Shift {
     }
 }
 
+/// Given the first two bytes, determine whether a 2-byte or
+/// four-byte instruction should be read.
 pub fn is_32bit(buffer: &[u8]) -> bool {
     ((buffer[1] & 0xe0) == 0xe0)
         && ((buffer[1] & 0x18) >= 0x8)

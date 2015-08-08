@@ -1,3 +1,8 @@
+//! A 'simple' ARM emulator.
+//!
+//! At the moment the emulator only has support for a handful of THUMB-2 instructions
+/// and no ARM-mode support.
+
 use std::fmt;
 
 use super::*;
@@ -92,10 +97,12 @@ pub trait Memory {
     }
 }
 
+/// A convenience wrapper for the CPSR.
 #[derive(Copy,Clone)]
 pub struct CPSR(pub u32);
 
 impl CPSR {
+    /// Create an empty CPSR.
     pub fn new() -> CPSR { CPSR(0) }
     
     /// Create a modified CPSR value with the given mask bits

@@ -1,11 +1,13 @@
-// Parser for the THUMB-2 instruction set
+//! Parser for the ARM instruction set
+//!
+//! Currently hideously incomplete.
 
 use std::fmt;
 
 use super::*;
 use super::disasm::Disassembler;
 
-/// Execute up to one THUMB instruction.
+/// Execute up to one ARM instruction.
 pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a [u8]) -> (&'a [u8], Result<()>) {
     if buffer.len() < 4  {
         return (buffer, Err(Error::NotEnoughInput(4)))

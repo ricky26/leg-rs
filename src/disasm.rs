@@ -1,3 +1,7 @@
+//! A disassembler for use with the instruction parsers.
+//!
+//! At the moment, this remains quite incomplete.
+
 use std::fmt;
 use std::convert;
 
