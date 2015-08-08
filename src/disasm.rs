@@ -94,8 +94,30 @@ impl fmt::Display for InstructionFlags {
     }
 }
 
+impl fmt::Display for Condition {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Condition::EQ => write!(fmt, "EQ"),
+            &Condition::NE => write!(fmt, "NE"),
+            &Condition::CS => write!(fmt, "CS"),
+            &Condition::CC => write!(fmt, "CC"),
+            &Condition::MI => write!(fmt, "MI"),
+            &Condition::PL => write!(fmt, "PL"),
+            &Condition::VS => write!(fmt, "VS"),
+            &Condition::VC => write!(fmt, "VC"),
+            &Condition::HI => write!(fmt, "HI"),
+            &Condition::LS => write!(fmt, "LS"),
+            &Condition::GE => write!(fmt, "GE"),
+            &Condition::LT => write!(fmt, "LT"),
+            &Condition::GT => write!(fmt, "GT"),
+            &Condition::LE => write!(fmt, "LE"),
+            &Condition::AL => write!(fmt, "AL"),
+        }
+    }
+}
+
 impl convert::From<fmt::Error> for Error {
     fn from(_src: fmt::Error) -> Error {
-        Error::Unknown
+        Error::Unknown("a formatting error occurred".into())
     }
 }

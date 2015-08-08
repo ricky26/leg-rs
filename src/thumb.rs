@@ -54,8 +54,8 @@ fn decode_reg_shift(op: Word, reg: Register) -> Shift {
 }
 
 pub fn is_32bit(buffer: &[u8]) -> bool {
-    ((buffer[0] & 0xe0) == 0xe0)
-        && ((buffer[0] & 0x18) != 0)
+    ((buffer[1] & 0xe0) == 0xe0)
+        && ((buffer[1] & 0x18) >= 0x8)
 }
 
 /// Execute up to one THUMB instruction.
@@ -73,18 +73,18 @@ pub fn execute<'a, 'b, T : ExecutionContext>(context: &'b mut T, mut buffer: &'a
     }
 
     if is_16bit {
-        match execute_16((buffer[1] as u16)
-                         | ((buffer[0] as u16) << 8),
+        match execute_16((buffer[0] as u16)
+                         | ((buffer[1] as u16) << 8),
                          context) {
             Err(x) => return (buffer, Err(x)),
             _ => buffer = &buffer[2..],
         }
         
     } else {
-        match execute_32(buffer[3] as u32
-                         | ((buffer[2] as u32) << 8)
-                         | ((buffer[1] as u32) << 16)
-                         | ((buffer[0] as u32) << 24),
+        match execute_32(buffer[2] as u32
+                         | ((buffer[3] as u32) << 8)
+                         | ((buffer[0] as u32) << 16)
+                         | ((buffer[1] as u32) << 24),
                          context) {
             Err(x) => return (buffer, Err(x)),
             _ => buffer = &buffer[4..],
@@ -112,6 +112,9 @@ pub fn disassemble<'a, 'b>(fmt: &'b mut fmt::Write, mut buffer: &'a [u8]) -> (&'
 
 /// Execute a thumb-16 instruction as an integer.
 pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> {
+    //println!("executing {:b}", src);
+    
+    let s32 = src as i32;
     match src {
 
         //
@@ -312,11 +315,11 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         //
 
         0b01001_00000000000...0b01001_11111111111 =>
-            context.ldr(INST_NORMAL,
+            context.ldr(INST_ALIGN,
                         Some(register(((src >> 8) & 7) as i8)),
                         ImmOrReg::Reg(Register::PC),
                         Shifted(Shift::none(),
-                                ImmOrReg::imm(((src & 0xf) as i32) << 2))),
+                                ImmOrReg::imm(((src & 0xff) as i32) << 2))),
 
         //
         // Load/Store single data item
@@ -439,7 +442,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
 
         // ADR
         0b10100_00000000000...0b10100_11111111111 =>
-            context.add(INST_NORMAL,
+            context.add(INST_ALIGN,
                         register(((src >> 8) & 0x7) as i8),
                         ImmOrReg::Reg(Register::PC),
                         Shifted(Shift::none(),
@@ -462,14 +465,14 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         Register::SP,
                         ImmOrReg::Reg(Register::SP),
                         Shifted(Shift::none(),
-                                ImmOrReg::imm((src & 0x7f) as i32))),
+                                ImmOrReg::imm((s32 & 0x7f) << 2))),
         
         0b101100001_0000000...0b101100001_1111111 =>
             context.sub(INST_NORMAL,
                         Register::SP,
                         ImmOrReg::Reg(Register::SP),
                         Shifted(Shift::none(),
-                                ImmOrReg::imm((src & 0x7f) as i32))),
+                                ImmOrReg::imm((s32 & 0x7f) << 2))),
         
         0b10110001_00000000...0b10110001_11111111 =>
             context.cbz(INST_NORMAL,
@@ -504,7 +507,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         ImmOrReg::imm((((src >> 2) & 0x3e) | 0x40) as i32)),
         
         0b1011010_000000000...0b1011010_111111111 =>
-            context.stm(INST_WRITEBACK,
+            context.stm(INST_WRITEBACK | INST_DECREMENT | INST_BEFORE,
                         Register::SP,
                         (0x4000 | (src & 0xff)) as u16),
 
@@ -556,10 +559,13 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
                         Register::PC,
                         ImmOrReg::imm(((src >> 2) & 0x3e) as i32)),
         
-        0b1011110_000000000...0b1011110_111111111 =>
-            context.ldm(INST_WRITEBACK,
-                        Register::SP,
-                        (0x4000 | (src & 0xff)) as u16),
+        0b1011110_000000000...0b1011110_111111111 => {
+            let regs = 0x4000
+                | (bits(s32, 8, 1) << 15)
+                | bits(s32, 0, 8);
+            
+            context.ldm(INST_WRITEBACK, Register::SP, regs as u16)
+        },
 
         0b10111110_00000000...0b10111110_11111111 =>
             context.bkpt((src & 0xff) as i8),
@@ -606,7 +612,7 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
         // LDM
         0b11001_00000000000...0b11001_11111111111 => {
             let reg_idx = (src >> 8) & 7;
-            context.ldm(if (src & (1 << reg_idx)) != 0 { INST_WRITEBACK } else { INST_NORMAL},
+            context.ldm(if (src & (1 << reg_idx)) != 0 { INST_WRITEBACK } else { INST_NORMAL },
                         register(reg_idx as i8),
                         (src & 0xff) as u16)
         },
@@ -618,13 +624,13 @@ pub fn execute_16<T: ExecutionContext>(src: u16, context: &mut T) -> Result<()> 
             context.b(INST_NORMAL,
                       condition(((src >> 8) & 0xf) as i8),
                       Register::PC,
-                      ImmOrReg::imm(((src & 0xff) << 1) as i32)),
+                      ImmOrReg::imm(extend_signed(bits(s32, 0, 8) << 1, 9))),
             
         0b11100_00000000000...0b11100_11111111111 =>
             context.b(INST_NORMAL,
                       Condition::AL,
                       Register::PC,
-                      ImmOrReg::imm((((src & 0x3ff) << 2) as i32) >> 1)),
+                      ImmOrReg::imm(extend_signed(bits(s32, 0, 11) << 1, 12))),
         
         _ => context.undefined("16-bit thumb"),
     }
@@ -690,8 +696,9 @@ fn parse_data_processing<T: ExecutionContext>(context: &mut T, src: u32, imm: Sh
 
 /// Execute a THUMB-32 instruction as an integer.
 pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> {
-    let s32 = src as i32;
+    //println!("executing {:b}", src);
     
+    let s32 = src as i32;
     match src {
         0...0b11100_11111111111_1111111111111111 => panic!("invalid 32-bit thumb instruction"),
         
@@ -1179,7 +1186,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
 
                     let cond = condition(bits(s32, 22, 4) as i8);
 
-                    context.b(INST_NORMAL,
+                    context.b(INST_ALIGN,
                               cond,
                               Register::PC,
                               ImmOrReg::imm(imm))
@@ -1193,7 +1200,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                                             | (bits(s32, 16, 10) << 12)
                                             | (bits(s32, 0, 11) << 1), 25);
 
-                    context.b(INST_NORMAL,
+                    context.b(INST_ALIGN,
                               Condition::AL,
                               Register::PC,
                               ImmOrReg::imm(imm))
@@ -1505,12 +1512,12 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                     imm = -imm
                 }
                 
-                context.ldr(flags | INST_BYTE,
+                context.ldr(flags | INST_BYTE | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                        ImmOrReg::imm(imm)))
             } else {
-                context.ldr(INST_BYTE, if rt == Register::PC { None } else { Some(rt) },
+                context.ldr(INST_BYTE | INST_ALIGN, if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
                                     ImmOrReg::register(bits(s32, 0, 4) as i8)))
@@ -1518,7 +1525,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         },
         
         0b111110001001_0000_0000000000000000...0b111110001001_1111_1111111111111111 =>
-            context.ldr(INST_BYTE,
+            context.ldr(INST_BYTE | INST_ALIGN,
                         Some(register(bits(s32, 12, 4) as i8)),
                         ImmOrReg::register(bits(s32, 16, 4) as i8),
                         Shifted(Shift::none(),
@@ -1547,12 +1554,12 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                     imm = -imm
                 }
                 
-                context.ldr(flags | INST_BYTE | INST_SIGNED,
+                context.ldr(flags | INST_BYTE | INST_SIGNED | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                        ImmOrReg::imm(imm)))
             } else {
-                context.ldr(INST_BYTE | INST_SIGNED,
+                context.ldr(INST_BYTE | INST_SIGNED | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
@@ -1561,7 +1568,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         },
         
         0b111110011001_0000_0000000000000000...0b111110011001_1111_1111111111111111 =>
-            context.ldr(INST_BYTE | INST_SIGNED,
+            context.ldr(INST_BYTE | INST_SIGNED | INST_ALIGN,
                         Some(register(bits(s32, 12, 4) as i8)),
                         ImmOrReg::register(bits(s32, 16, 4) as i8),
                         Shifted(Shift::none(),
@@ -1594,12 +1601,12 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                     imm = -imm
                 }
                 
-                context.ldr(flags | INST_HALF,
+                context.ldr(flags | INST_HALF | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                        ImmOrReg::imm(imm)))
             } else {
-                context.ldr(INST_HALF, if rt == Register::PC { None } else { Some(rt) },
+                context.ldr(INST_HALF | INST_ALIGN, if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
                                     ImmOrReg::register(bits(s32, 0, 4) as i8)))
@@ -1607,7 +1614,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         },
         
         0b111110001011_0000_0000000000000000...0b111110001011_1111_1111111111111111 =>
-            context.ldr(INST_HALF,
+            context.ldr(INST_HALF | INST_ALIGN,
                         Some(register(bits(s32, 12, 4) as i8)),
                         ImmOrReg::register(bits(s32, 16, 4) as i8),
                         Shifted(Shift::none(),
@@ -1636,12 +1643,12 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                     imm = -imm
                 }
                 
-                context.ldr(flags | INST_HALF | INST_SIGNED,
+                context.ldr(flags | INST_HALF | INST_SIGNED | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                        ImmOrReg::imm(imm)))
             } else {
-                context.ldr(INST_HALF | INST_SIGNED,
+                context.ldr(INST_HALF | INST_SIGNED | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
@@ -1650,7 +1657,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         },
         
         0b111110011011_0000_0000000000000000...0b111110011011_1111_1111111111111111 =>
-            context.ldr(INST_HALF | INST_SIGNED,
+            context.ldr(INST_HALF | INST_SIGNED | INST_ALIGN,
                         Some(register(bits(s32, 12, 4) as i8)),
                         ImmOrReg::register(bits(s32, 16, 4) as i8),
                         Shifted(Shift::none(),
@@ -1683,12 +1690,12 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
                     imm = -imm
                 }
                 
-                context.ldr(flags,
+                context.ldr(flags | INST_ALIGN,
                             if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn), Shifted(Shift::none(),
                                                        ImmOrReg::imm(imm)))
             } else {
-                context.ldr(INST_NORMAL, if rt == Register::PC { None } else { Some(rt) },
+                context.ldr(INST_ALIGN, if rt == Register::PC { None } else { Some(rt) },
                             ImmOrReg::Reg(rn),
                             Shifted(Shift(ShiftType::LSL, ImmOrReg::imm(bits(s32, 4, 2))),
                                     ImmOrReg::register(bits(s32, 0, 4) as i8)))
@@ -1696,7 +1703,7 @@ pub fn execute_32<T: ExecutionContext>(src: u32, context: &mut T) -> Result<()> 
         },
         
         0b111110001101_0000_0000000000000000...0b111110001101_1111_1111111111111111 =>
-            context.ldr(INST_NORMAL,
+            context.ldr(INST_ALIGN,
                         Some(register(bits(s32, 12, 4) as i8)),
                         ImmOrReg::register(bits(s32, 16, 4) as i8),
                         Shifted(Shift::none(),

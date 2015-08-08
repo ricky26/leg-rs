@@ -1,12 +1,17 @@
+#![feature(plugin)]
+#![plugin(regex_macros)]
+
 use std::{mem, result, error, fmt, ops};
 
 #[macro_use]
 extern crate bitflags;
+extern crate regex;
 
 pub mod arm;
 pub mod thumb;
 pub mod simple;
 pub mod disasm;
+pub mod gdb;
 
 pub trait Int : Copy
     + ops::Sub<Self, Output=Self>
@@ -39,18 +44,19 @@ bitflags! {
         const INST_WIDE           = 1 << 5,
         const INST_TOP            = 1 << 6,
         const INST_BOTTOM         = 1 << 7,
+        const INST_ALIGN          = 1 << 8,
 
         // LDR/STR
-        const INST_OFFSET         = 1 << 8,
-        const INST_POSTINDEX      = 1 << 9,
-        const INST_PREINDEX       = 1 << 10,
-        const INST_UNPRIV         = 1 << 11,
+        const INST_OFFSET         = 1 << 9,
+        const INST_POSTINDEX      = 1 << 10,
+        const INST_PREINDEX       = 1 << 11,
+        const INST_UNPRIV         = 1 << 12,
 
         // LDM/STM
-        const INST_ACQUIRE        = 1 << 11,
-        const INST_WRITEBACK      = 1 << 12,
-        const INST_DECREMENT      = 1 << 13,
-        const INST_BEFORE         = 1 << 14,
+        const INST_ACQUIRE        = 1 << 12,
+        const INST_WRITEBACK      = 1 << 13,
+        const INST_DECREMENT      = 1 << 14,
+        const INST_BEFORE         = 1 << 15,
 
         // B
         const INST_LINK           = 1 << 12,
@@ -233,6 +239,7 @@ impl Condition {
 }
 
 /// Shift type (used as an operand to some instructions)
+#[derive(Debug,Copy,Clone)]
 pub enum ShiftType {
     None,
     LSL,
@@ -243,6 +250,7 @@ pub enum ShiftType {
 }
 
 /// A shift which should be applied to another operand.
+#[derive(Debug,Copy,Clone)]
 pub struct Shift(pub ShiftType, pub ImmOrReg<Word>);
 
 impl Shift {
@@ -252,6 +260,7 @@ impl Shift {
 }
 
 /// A shifted operand.
+#[derive(Debug,Copy,Clone)]
 pub struct Shifted(pub Shift, pub ImmOrReg<Word>);
 
 /// LDM/STM modes
@@ -400,7 +409,7 @@ pub enum Error {
     /// Unimplemented codepath.
     Unimplemented(String),
     /// Unknown unrecoverable error.
-    Unknown,
+    Unknown(String),
 }
 
 impl error::Error for Error {
@@ -409,7 +418,7 @@ impl error::Error for Error {
             &Error::NotEnoughInput(_)    => "not enough input",
             &Error::Undefined(ref x)     => &x,
             &Error::Unpredictable        => "unpredictable instruction",
-            &Error::Unknown              => "an unknown error occurred",
+            &Error::Unknown(ref x)       => &x,
             &Error::Unimplemented(ref x) => &x,
         }
     }
@@ -433,10 +442,10 @@ impl fmt::Debug for Error {
 /// ARM emulator error result (for convenience).
 pub type Result<T> = result::Result<T, Error>;
 
-fn extend_signed<T: Int>(src: T, bits: T) -> T {
-    let src_bits = T::from(mem::size_of::<T>() as i32);
+fn extend_signed(src: Word, bits: Word) -> Word {
+    let src_bits = i32::from((mem::size_of::<Word>()*8) as i32);
     let shift_amt = src_bits - bits;
 
     // Left-pad with sign bit
-    (src << shift_amt) >> shift_amt
+    src.wrapping_shl(shift_amt as u32).wrapping_shr(shift_amt as u32)
 }

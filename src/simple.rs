@@ -2,6 +2,7 @@ use std::fmt;
 
 use super::*;
 use super::register;
+use std::fmt::Write;
 
 pub trait IntTruncate {
     fn int_truncate(src: Word) -> Self;
@@ -21,6 +22,15 @@ impl IntTruncate for i16 {
 
 impl IntTruncate for i8 {
     fn int_truncate(src: Word) -> i8 { src as i8 }
+}
+
+fn swap_word(src: Word) -> Word {
+    let src = src as u32;
+    let src = (src >> 24)
+        | ((src >> 8) & 0xff00)
+        | ((src << 8) & 0xff0000)
+        | ((src << 24) & 0xff000000);
+    src as Word
 }
 
 pub trait Memory {
@@ -73,6 +83,11 @@ pub struct SimpleEmulator<M: Memory> {
     itt_mask: u8,
     itt_count: i8,
     itt_cond: Condition,
+    paused: bool,
+    next_pc: Word,
+    inst_size: Word,
+    
+    pending_gdb_commands: Vec<gdb::Command<'static>>,
 }
 
 impl<M: Memory> SimpleEmulator<M> {
@@ -84,6 +99,11 @@ impl<M: Memory> SimpleEmulator<M> {
             itt_mask: 0u8,
             itt_count: 0,
             itt_cond: Condition::AL,
+            paused: false,
+            next_pc: 0i32,
+            inst_size: 0i32,
+
+            pending_gdb_commands: Vec::new(),
         }
     }
 
@@ -95,15 +115,37 @@ impl<M: Memory> SimpleEmulator<M> {
         self.registers[reg.index() as usize] = value
     }
 
-    pub fn imm_or_reg<T: IntTruncate>(&self, imm_or_reg: ImmOrReg<T>) -> T {
+    pub fn cpu_register(&self, flags: InstructionFlags, reg: Register) -> Word {
+        if reg == Register::PC {
+            let mut val = self.register(Register::PC) + 4;
+
+            if flags.get(INST_ALIGN) {
+                val = val &! 0b11;
+            }
+
+            val
+        } else {
+            self.register(reg)
+        }
+    }
+
+    pub fn cpu_set_register(&mut self, _flags: InstructionFlags, reg: Register, value: Word) {
+        if reg == Register::PC {
+            self.next_pc = value;
+        } else {
+            self.set_register(reg, value);
+        }
+    }
+
+    pub fn imm_or_reg<T: IntTruncate>(&self, flags: InstructionFlags, imm_or_reg: ImmOrReg<T>) -> T {
         match imm_or_reg {
-            ImmOrReg::Reg(x) => T::int_truncate(self.register(x)),
+            ImmOrReg::Reg(x) => T::int_truncate(self.cpu_register(flags, x)),
             ImmOrReg::Imm(x) => x,
         }
     }
 
-    pub fn shift(&self, src: Word, shift: Shift) -> Word {
-        match (shift.0, self.imm_or_reg(shift.1)) {
+    pub fn shift(&self, flags: InstructionFlags, src: Word, shift: Shift) -> Word {
+        match (shift.0, self.imm_or_reg(flags, shift.1)) {
             (ShiftType::None, _) => src,
             (ShiftType::LSL, x) => src << x,
             (ShiftType::LSR, x) => ((src as u32) << (x as u32)) as Word,
@@ -117,8 +159,8 @@ impl<M: Memory> SimpleEmulator<M> {
         }
     }
 
-    pub fn shifted(&self, src: Shifted) -> Word {
-        self.shift(self.imm_or_reg(src.1), src.0)
+    pub fn shifted(&self, flags: InstructionFlags, src: Shifted) -> Word {
+        self.shift(flags, self.imm_or_reg(flags, src.1), src.0)
     }
     
     pub fn negative(&self) -> bool {
@@ -170,7 +212,7 @@ impl<M: Memory> SimpleEmulator<M> {
         let ub = b as u32;
         let uc = c as u32;
         
-        let mut apsr = (ua - ub - uc) & 0x80000000;
+        let mut apsr = ua.wrapping_sub(ub).wrapping_sub(uc) & 0x80000000;
         
         if ua == ub {
             apsr |= 1u32 << 30
@@ -178,8 +220,8 @@ impl<M: Memory> SimpleEmulator<M> {
         if ua > ub {
             apsr |= 1u32 << 29
         }
-        if ((a < 0) && (b > (2147483647-a+1)))
-            || ((a > 0) && (-b > (a-2147483647))) {
+        if ((a < 0) && (b > (2147483647i32.wrapping_sub(a).wrapping_add(1))))
+            || ((a > 0) && (-b > (a.wrapping_sub(2147483647)))) {
                 apsr |= 1u32 << 28
             }
 
@@ -191,7 +233,7 @@ impl<M: Memory> SimpleEmulator<M> {
         let ub = b as u32;
         let uc = c as u32;
         
-        let mut apsr = (ua + ub + uc) & 0x80000000;
+        let mut apsr = ua.wrapping_add(ub).wrapping_add(uc) & 0x80000000;
         
         if (ua + ub) == 0 {
             apsr |= 1u32 << 30
@@ -199,34 +241,54 @@ impl<M: Memory> SimpleEmulator<M> {
         if (4294967295u32 - ua) > ub {
             apsr |= 1u32 << 29
         }
-        if ((a < 0) && (b < -(2147483647-a+1)))
-            || ((a > 0) && (b > (a-2147483647))) {
+        if ((a < 0) && (b < -(2147483647i32.wrapping_sub(a).wrapping_add(1))))
+            || ((a > 0) && (b > (a.wrapping_sub(2147483647)))) {
                 apsr |= 1u32 << 28
             }
 
         self.set_apsr(apsr)
     }
 
-    pub fn branch(&mut self, link: bool, exchange: bool, jazelle: bool, addr: i32) -> Result<()> {
-        if link {
-            let pc = self.register(Register::PC);
-            self.set_register(Register::LR, pc);
+    pub fn branch(&mut self, flags: InstructionFlags, addr: i32) -> Result<()> {
+        if flags.get(INST_LINK) {
+            let pc = self.register(Register::PC) + self.inst_size;
+            self.cpu_set_register(flags, Register::LR, pc);
         }
 
-        if exchange {
+        if flags.get(INST_EXCHANGE) {
             // TODO: Check whether we need to swap between ARM/THUMB
         }
 
-        if jazelle {
+        if flags.get(INST_JAZELLE) {
             // TODO: Jazelle!
         }
 
-        self.set_register(Register::PC, addr);
+        self.cpu_set_register(flags, Register::PC, addr);
 
         Ok(())
     }
+
+    pub fn current_instruction(&self) -> Result<Word> {
+        let mut buf = [0u8; 4];
+        let pc = self.register(Register::PC);
+
+        // TODO: ARM vs THUMB mode
+
+        try!(self.memory.read(pc as u64, &mut buf[..2]));
+
+        if thumb::is_32bit(&buf) {
+            try!(self.memory.read((pc + 2) as u64, &mut buf[2..4]));
+        }
+
+        Ok((((buf[0] as Word) << 24)
+            | ((buf[1] as Word) << 16)
+            | ((buf[2] as Word) << 8)
+            | (buf[3] as Word)))
+    }
     
     pub fn execute_one(&mut self) -> Result<()> {
+        if self.paused { return Ok(()) }
+        
         let mut buf = [0u8; 4];
         let mut pc = self.register(Register::PC);
 
@@ -234,13 +296,17 @@ impl<M: Memory> SimpleEmulator<M> {
 
         try!(self.memory.read(pc as u64, &mut buf[..2]));
         pc += 2;
+        self.inst_size = 2;
 
-        if thumb::is_32bit(&buf) {
+        let is_32bit = thumb::is_32bit(&buf);
+
+        if is_32bit {
             try!(self.memory.read(pc as u64, &mut buf[2..4]));
             pc += 2;
+            self.inst_size = 4;
         }
-        
-        self.set_register(Register::PC, pc);
+
+        self.next_pc = pc;
 
         if self.itt_count > 0 {
             let skip = ((self.itt_mask & 1) != 0) ^ self.cond(self.itt_cond);
@@ -248,15 +314,13 @@ impl<M: Memory> SimpleEmulator<M> {
             self.itt_count -= 1;
 
             if skip {
-                try!(self.print_state());
                 return Ok(())
             }
         }
 
-        let (_, err) = super::thumb::execute(self, &mut buf);
-
-        try!(self.print_state());
-        
+        let (_, err) = super::thumb::execute(self, if is_32bit { &mut buf } else { &mut buf[..2] });
+        pc = self.next_pc;
+        self.set_register(Register::PC, pc);
         err
     }
 
@@ -297,114 +361,213 @@ impl<M: Memory> SimpleEmulator<M> {
         println!("{}", out);
         Ok(())
     }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn send_gdb_command<'a>(&mut self, cmd: &gdb::Command<'a>) {
+        self.pending_gdb_commands.push(cmd.to_owned());
+    }
+
+    pub fn with_pending_gdb_commands<T: for<'a> FnMut(&'a gdb::Command<'a>)>(&mut self, mut callback: T) {
+        for i in self.pending_gdb_commands.iter() {
+            callback(&i);
+        }
+        self.pending_gdb_commands.clear()
+    }
+
+    pub fn process_gdb_command(&mut self, cmd: &gdb::Command) {
+        if cmd.contents() == "?" {
+            if self.paused {
+                self.send_gdb_command(&gdb::Command::new("S05"));
+            } else {
+                self.send_gdb_command(&gdb::Command::new("S13"));
+            }
+        } else if cmd.contents() == "g" {
+
+            let mut out = String::new();
+            for i in 0..16 {
+                write!(&mut out, "{:08x}", swap_word(self.registers[i])).unwrap();
+            }
+
+            for _ in 0..8 {
+                write!(&mut out, "{:016x}", 0x12345678abcdefu64).unwrap();
+            }
+
+            write!(&mut out, "{:08x}", 0x12345678u32).unwrap();
+            write!(&mut out, "{:08x}", swap_word(self.apsr as i32)).unwrap();
+
+            self.send_gdb_command(&gdb::Command::new_owned(out));
+        } else if cmd.contents() == "c" {
+            self.paused = false;
+        } else if cmd.contents() == "s" {
+            let paws = self.paused;
+            self.paused = false;
+            self.execute_one().ok();
+            self.paused = paws;
+            self.send_gdb_command(&gdb::Command::new("S05"));
+        } else if let Some(caps) = regex!("p([0-9a-fA-F]+)").captures(cmd.contents()) {
+            let reg = usize::from_str_radix(caps.at(1).unwrap(), 16).unwrap();
+
+            let mut out = String::new();
+            match reg {
+                0...15 => write!(&mut out, "{:08x}", swap_word(self.registers[reg])).unwrap(),
+                16...23 => write!(&mut out, "{:016x}", 0x12345678abcdefu64).unwrap(),
+                25 => write!(&mut out, "{:08x}", swap_word(self.apsr as i32)).unwrap(),
+                _ => write!(&mut out, "{:08x}", 0i32).unwrap(),
+            };
+            
+            self.send_gdb_command(&gdb::Command::new_owned(out));
+        } else if let Some(caps) = regex!("m([0-9a-fA-F]+),([0-9a-fA-F]+)").captures(cmd.contents()) {
+            let start = u64::from_str_radix(caps.at(1).unwrap(), 16).unwrap();
+            let len = usize::from_str_radix(caps.at(2).unwrap(), 16).unwrap();
+
+            let mut vec = Vec::new();
+            vec.reserve(len);
+            //unsafe { vec.set_len(len); }
+
+            for _ in 0..len {
+                vec.push(0u8);
+            }
+            
+            self.memory.read(start, &mut vec[..]).ok();
+
+            let mut out = String::new();
+            for i in vec {
+                write!(&mut out, "{:02x}", i).unwrap();
+            }
+
+            self.send_gdb_command(&gdb::Command::new_owned(out));
+        } else if let Some(caps) = regex!("M([0-9a-fA-F]+),([0-9a-fA-F]+):([0-9a-fA-F]+)").captures(cmd.contents()) {
+            let start = u64::from_str_radix(caps.at(1).unwrap(), 16).unwrap();
+            let len = usize::from_str_radix(caps.at(2).unwrap(), 16).unwrap();
+            let hex = caps.at(3).unwrap();
+
+            for i in 0..len {
+                let buf = [u8::from_str_radix(&hex[i*2..(i+1)*2], 16).unwrap()];
+                self.memory.write(start+(i as u64), &buf).ok();
+            }
+
+            self.send_gdb_command(&gdb::Command::new("OK"));
+        } else {
+            println!("Unimplemented GDB command: {}", cmd.contents());
+            self.send_gdb_command(&gdb::Command::new(""));
+        }
+    }
 }
 
 
 impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
     fn undefined(&mut self, msg: &str) -> Result<()> {
+        println!("PC => {:b}", self.current_instruction().unwrap());
         panic!("undefined {} @ {}", msg, self.register(Register::PC))
     }
     fn unpredictable(&mut self) -> Result<()> {
+        println!("PC => {:b}", self.current_instruction().unwrap());
         panic!("unpredictable @ {}", self.register(Register::PC))
     }
     
     // Move
     fn mov(&mut self, flags: InstructionFlags, dest: Register, src: Shifted) -> Result<()> {
-        let val = self.shifted(src);
+        let val = self.shifted(flags, src);
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmn(val, 0, 0)
         }
-        self.set_register(dest, val);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
     
     // Add/subtract
     fn add(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
-        let a = self.imm_or_reg(src);
-        let b = self.shifted(add);
+        let a = self.imm_or_reg(flags, src);
+        let b = self.shifted(flags, add);
         let val = a + b;
+        
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmn(a, b, 0)
         }
-        self.set_register(dest, val);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
     fn sub(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
-        let a = self.imm_or_reg(src);
-        let b = self.shifted(sub);
+        let a = self.imm_or_reg(flags, src);
+        let b = self.shifted(flags, sub);
         let val = a - b;
+
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmp(a, b, 0)
         }
-        self.set_register(dest, val);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
     fn rsb(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
-        let a = self.imm_or_reg(src);
-        let b = self.shifted(sub);
+        let a = self.imm_or_reg(flags, src);
+        let b = self.shifted(flags, sub);
         let val = b - a;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmp(b, a, 0)
         }
-        self.set_register(dest, val);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
     fn adc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, add: Shifted) -> Result<()> {
-        let a = self.imm_or_reg(src);
-        let b = self.shifted(add);
+        let a = self.imm_or_reg(flags, src);
+        let b = self.shifted(flags, add);
         let c = self.carry() as Word;
         let val = a + b + c;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmn(a, b, c)
         }
-        self.set_register(dest, val);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
     fn sbc(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, sub: Shifted) -> Result<()> {
-        let a = self.imm_or_reg(src);
-        let b = self.shifted(sub);
+        let a = self.imm_or_reg(flags, src);
+        let b = self.shifted(flags, sub);
         let c = self.carry() as Word;
         let val = a - b - c;
         if (self.itt_count == 0) && ((flags & INST_SET_FLAGS) != INST_NORMAL) {
             self.cmp(a, b, c)
         }
-        self.set_register(dest, val);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
-    fn cmp(&mut self, _flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
-        let a = self.register(a);
-        let b = self.shifted(b);
+    fn cmp(&mut self, flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
+        let a = self.cpu_register(flags, a);
+        let b = self.shifted(flags, b);
         self.cmp(a, b, 0);
         Ok(())
     }
-    fn cmn(&mut self, _flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
-        let a = self.register(a);
-        let b = self.shifted(b);
+    fn cmn(&mut self, flags: InstructionFlags, a: Register, b: Shifted) -> Result<()> {
+        let a = self.cpu_register(flags, a);
+        let b = self.shifted(flags, b);
         self.cmn(a, b, 0);
         Ok(())
     }
 
     // Bitwise
-    fn and(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
-        let val = self.imm_or_reg(src) & self.shifted(operand);
-        self.set_register(dest, val);
+    fn and(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
+        let val = self.imm_or_reg(flags, src) & self.shifted(flags, operand);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
-    fn orr(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
-        let val =self.imm_or_reg(src) | self.shifted(operand);
-        self.set_register(dest, val);
+    fn orr(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
+        let val = self.imm_or_reg(flags, src) | self.shifted(flags, operand);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
-    fn eor(&mut self, _flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
-        let val = self.imm_or_reg(src) ^ self.shifted(operand);
-        self.set_register(dest, val);
+    fn eor(&mut self, flags: InstructionFlags, dest: Register, src: ImmOrReg<Word>, operand: Shifted) -> Result<()> {
+        let val = self.imm_or_reg(flags, src) ^ self.shifted(flags, operand);
+        self.cpu_set_register(flags, dest, val);
         Ok(())
     }
     
     fn str(&mut self, flags: InstructionFlags, src: Register, dest: ImmOrReg<Word>, off: Shifted) -> Result<()> {
-        let addr = self.imm_or_reg(dest) + self.shifted(off);
-        let value = self.register(src);
-
+        let base = self.imm_or_reg(flags, dest);
+        let addr = base + self.shifted(flags, off);
+        let value = self.cpu_register(flags, src);
+        
         if flags.get(INST_BYTE) {
             self.memory.write_u8(addr as u64, value as u8)
         } else if flags.get(INST_HALF) {
@@ -414,10 +577,11 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         }
     }
     
-    fn ldr(&mut self, flags: InstructionFlags, dest: Option<Register>, src: ImmOrReg<Word>, off: Shifted) -> Result<()> {
-        let addr = self.imm_or_reg(src) + self.shifted(off);
+    fn ldr(&mut self, flags: InstructionFlags, dest: Option<Register>, src: ImmOrReg<Word>, off: Shifted) -> Result<()> {        
+        let base = self.imm_or_reg(flags, src);
+        let addr = base + self.shifted(flags, off);
         let value;
-
+        
         if flags.get(INST_BYTE) {
             value = try!(self.memory.read_u8(addr as u64)) as i32;
         } else if flags.get(INST_HALF) {
@@ -427,21 +591,23 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         }
 
         if let Some(dest) = dest {
-            self.set_register(dest, value)
+            self.cpu_set_register(flags, dest, value);
         }
         
         Ok(())
     }
     
     fn ldm(&mut self, flags: InstructionFlags, dest: Register, registers: u16) -> Result<()> {
-        let mut addr = self.register(dest);
+        let mut addr = self.cpu_register(flags, dest);
         let writeback = flags.get(INST_WRITEBACK);
         let dec = flags.get(INST_DECREMENT);
         let before = flags.get(INST_BEFORE);
-
-        for i in 15..0 {
+        
+        for i in 0..16 {
+            let i = 15-i;
             if (registers & (1 << i)) == 0 { continue }
             let reg = register(i);
+            
             if reg == dest { continue }
 
             if before {
@@ -452,8 +618,9 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
                 }
             }
 
-            let value = self.memory.read_u32(addr as u64).ok().unwrap() as i32;
-            self.set_register(reg, value);
+            if let Ok(value) = self.memory.read_u32(addr as u64) {
+                self.cpu_set_register(flags, reg, value as i32);
+            }
             
             if !before {
                 if dec {
@@ -465,19 +632,19 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         }
 
         if writeback {
-            self.set_register(dest, addr)
+            self.cpu_set_register(flags, dest, addr)
         }
 
         Ok(())
     }
     
     fn stm(&mut self, flags: InstructionFlags, dest: Register, registers: u16) -> Result<()> {
-        let mut addr = self.register(dest);
+        let mut addr = self.cpu_register(flags, dest);
         let writeback = flags.get(INST_WRITEBACK);
         let dec = flags.get(INST_DECREMENT);
         let before = flags.get(INST_BEFORE);
 
-        for i in 0..15 {
+        for i in 0..16 {
             if (registers & (1 << i)) == 0 { continue }
             let reg = register(i);
             if reg == dest { continue }
@@ -490,7 +657,7 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
                 }
             }
 
-            let value = self.register(reg);
+            let value = self.cpu_register(flags, reg);
             self.memory.write_u32(addr as u64, value as u32).ok();
             
             if !before {
@@ -503,7 +670,7 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
         }
 
         if writeback {
-            self.set_register(dest, addr)
+            self.cpu_set_register(flags, dest, addr)
         }
         
         Ok(())
@@ -514,25 +681,28 @@ impl<'a, M: Memory> ExecutionContext for SimpleEmulator<M> {
             return Ok(())
         }
 
-        let addr = self.register(base) + self.imm_or_reg(addr);
-        self.branch(flags.get(INST_LINK),
-                    flags.get(INST_EXCHANGE),
-                    flags.get(INST_JAZELLE),
-                    addr)
+        let base = self.cpu_register(flags, base);
+        let addr = base + self.imm_or_reg(flags, addr);
+
+        self.branch(flags, addr)
     }
     
     fn cbz(&mut self, flags: InstructionFlags, src: Register, base: Register, addr: ImmOrReg<Word>) -> Result<()> {
-        let src = self.register(src);
+        let src = self.cpu_register(flags, src);
         let cond = if flags.get(INST_NONZERO) { src != 0 } else { src == 0 };
 
         if cond {
-            let addr = self.register(base) + self.imm_or_reg(addr);
-            self.branch(flags.get(INST_LINK),
-                        flags.get(INST_EXCHANGE),
-                        flags.get(INST_JAZELLE),
-                        addr)
+            let base = self.cpu_register(flags, base);
+            let addr = base + self.imm_or_reg(flags, addr);
+            self.branch(flags, addr)
         } else {
             Ok(())
         }
+    }
+
+    fn bkpt(&mut self, _code: i8) -> Result<()> {
+        self.paused = true;
+        self.send_gdb_command(&gdb::Command::new("S05"));
+        Ok(())
     }
 }
