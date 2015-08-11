@@ -17,7 +17,7 @@ fn main() {
     let mut gdbserver = leg::gdb::Server::new();
     let mut emu = leg::simple::SimpleEmulator::new(leg::simple::SimpleSystem::new());
 
-    emu.system.memory_mut().add(0, 0x1000, Box::new(leg::simple::RAM::with_capacity(0x1000)));
+    emu.system.memory.add(0, 0x1000, Box::new(leg::simple::RAM::with_capacity(0x1000)));
     
     let args = Docopt::new(USAGE)
         .and_then(|d| d.argv(std::env::args()).parse())
@@ -46,7 +46,7 @@ fn main() {
             vec
         };
 
-        emu.system.memory_mut().write(addr, &vec).ok();
+        emu.system.memory.write(addr, &vec).ok();
     }
 
     loop {

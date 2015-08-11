@@ -94,8 +94,8 @@ impl<S: System> SimpleEmulator<S> {
         }
     }
 
-    pub fn memory_mut(&mut self) -> &mut S::Memory {
-        self.system.memory_mut()
+    pub fn memory(&self) -> &S::Memory {
+        self.system.memory()
     }
 
     pub fn debugging(&self) -> bool { self.debugging }
@@ -238,14 +238,14 @@ impl<S: System> SimpleEmulator<S> {
 
         // TODO: ARM vs THUMB mode
 
-        try!(self.memory_mut().read(pc as u64, &mut buf[..2]));
+        try!(self.memory().read(pc as u64, &mut buf[..2]));
         pc += 2;
         self.inst_size = 2;
 
         let is_32bit = thumb::is_32bit(&buf);
 
         if is_32bit {
-            try!(self.memory_mut().read(pc as u64, &mut buf[2..4]));
+            try!(self.memory().read(pc as u64, &mut buf[2..4]));
             pc += 2;
             self.inst_size = 4;
         }
@@ -385,7 +385,7 @@ impl<S: System> SimpleEmulator<S> {
                 vec.push(0u8);
             }
             
-            self.memory_mut().read(start, &mut vec[..]).ok();
+            self.memory().read(start, &mut vec[..]).ok();
 
             let mut out = String::new();
             for i in vec {
@@ -400,7 +400,7 @@ impl<S: System> SimpleEmulator<S> {
 
             for i in 0..len {
                 let buf = [u8::from_str_radix(&hex[i*2..(i+1)*2], 16).unwrap()];
-                self.memory_mut().write(start+(i as u64), &buf).ok();
+                self.memory().write(start+(i as u64), &buf).ok();
             }
 
             self.send_gdb_command(&gdb::Command::new("OK"));
@@ -571,11 +571,11 @@ impl<'a, S: System> ExecutionContext for SimpleEmulator<S> {
         let value = self.cpu_register(flags, src);
         
         if flags.get(INST_BYTE) {
-            self.memory_mut().write_u8(addr as u64, value as u8)
+            self.memory().write_u8(addr as u64, value as u8)
         } else if flags.get(INST_HALF) {
-            self.memory_mut().write_u16(addr as u64, value as u16)
+            self.memory().write_u16(addr as u64, value as u16)
         } else {
-            self.memory_mut().write_u32(addr as u64, value as u32)
+            self.memory().write_u32(addr as u64, value as u32)
         }
     }
     
@@ -586,11 +586,11 @@ impl<'a, S: System> ExecutionContext for SimpleEmulator<S> {
         let value;
         
         if flags.get(INST_BYTE) {
-            value = try!(self.memory_mut().read_u8(addr as u64)) as i32;
+            value = try!(self.memory().read_u8(addr as u64)) as i32;
         } else if flags.get(INST_HALF) {
-            value = try!(self.memory_mut().read_u16(addr as u64)) as i32;
+            value = try!(self.memory().read_u16(addr as u64)) as i32;
         } else {
-            value = try!(self.memory_mut().read_u32(addr as u64)) as i32;
+            value = try!(self.memory().read_u32(addr as u64)) as i32;
         }
 
         if let Some(dest) = dest {
@@ -621,7 +621,7 @@ impl<'a, S: System> ExecutionContext for SimpleEmulator<S> {
                 }
             }
 
-            if let Ok(value) = self.memory_mut().read_u32(addr as u64) {
+            if let Ok(value) = self.memory().read_u32(addr as u64) {
                 self.cpu_set_register(flags, reg, value as i32);
             }
             
@@ -662,7 +662,7 @@ impl<'a, S: System> ExecutionContext for SimpleEmulator<S> {
             }
 
             let value = self.cpu_register(flags, reg);
-            self.memory_mut().write_u32(addr as u64, value as u32).ok();
+            self.memory().write_u32(addr as u64, value as u32).ok();
             
             if !before {
                 if dec {

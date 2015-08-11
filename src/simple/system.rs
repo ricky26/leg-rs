@@ -15,7 +15,7 @@ impl<'a> SimpleSystem<'a> {
 impl<'a> System for SimpleSystem<'a> {
     type Memory = MemoryTree<'a>;
     
-    fn memory_mut(&mut self) -> &mut MemoryTree<'a> {
-        &mut self.memory
+    fn memory(&self) -> &MemoryTree<'a> {
+        &self.memory
     }
 }

@@ -53,22 +53,22 @@ fn adc32(a: Word, b: Word, c: Word) -> (Word, bool, bool) {
 }
 
 pub trait Memory {
-    fn read(&mut self, addr: u64, dest: &mut [u8]) -> Result<()>;
-    fn write(&mut self, addr: u64, src: &[u8]) -> Result<()>;
+    fn read(&self, _addr: u64, _dest: &mut [u8]) -> Result<()> { Err(Error::Unknown(format!("not implemented"))) }
+    fn write(&self, _addr: u64, _src: &[u8]) -> Result<()> { Err(Error::Unknown(format!("not implemented"))) }
 
-    fn read_u8(&mut self, addr: u64) -> Result<u8> {
+    fn read_u8(&self, addr: u64) -> Result<u8> {
         let mut data = [0u8];
         try!(self.read(addr, &mut data));
         Ok(data[0])
     }
 
-    fn read_u16(&mut self, addr: u64) -> Result<u16> {
+    fn read_u16(&self, addr: u64) -> Result<u16> {
         let mut data = [0u8;2];
         try!(self.read(addr, &mut data));
         Ok((data[0] as u16) | ((data[1] as u16) << 8))
     }
 
-    fn read_u32(&mut self, addr: u64) -> Result<u32> {
+    fn read_u32(&self, addr: u64) -> Result<u32> {
         let mut data = [0u8;4];
         try!(self.read(addr, &mut data));
         Ok((data[0] as u32)
@@ -77,16 +77,16 @@ pub trait Memory {
            | ((data[3] as u32) << 24))
     }
 
-    fn write_u8(&mut self, addr: u64, val: u8) -> Result<()> {
+    fn write_u8(&self, addr: u64, val: u8) -> Result<()> {
         self.write(addr, &[val])
     }
 
-    fn write_u16(&mut self, addr: u64, val: u16) -> Result<()> {
+    fn write_u16(&self, addr: u64, val: u16) -> Result<()> {
         self.write(addr, &[(val & 0xff) as u8,
                            ((val >> 8) & 0xff) as u8])
     }
 
-    fn write_u32(&mut self, addr: u64, val: u32) -> Result<()> {
+    fn write_u32(&self, addr: u64, val: u32) -> Result<()> {
         self.write(addr, &[(val & 0xff) as u8,
                            ((val >> 8) & 0xff) as u8,
                            ((val >> 16) & 0xff) as u8,
@@ -97,5 +97,5 @@ pub trait Memory {
 pub trait System {
     type Memory: Memory;
     
-    fn memory_mut(&mut self) -> &mut Self::Memory;
+    fn memory(&self) -> &Self::Memory;
 }
